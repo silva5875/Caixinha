@@ -726,6 +726,7 @@ function openOpenFinance(){
   openSheet(`<h2>Open Finance</h2>
     <div class="field"><label>URL do servidor</label><input id="ofUrl" placeholder="https://seu-backend.vercel.app" value="${esc(of.backend||'')}"></div>
     <div class="field"><label>Token do app (APP_TOKEN)</label><input id="ofTok" placeholder="o mesmo do servidor" value="${esc(of.token||'')}"></div>
+    <div class="field"><label>itemId (opcional — cole o do Meu Pluggy)</label><input id="ofItem" placeholder="preenche sozinho ao conectar pelo widget" value="${esc(of.itemId||'')}"></div>
     <button class="btn ghost block" id="ofSave">Salvar configuração</button>
     <div style="height:16px"></div>
     <div class="sheet-actions">
@@ -735,7 +736,7 @@ function openOpenFinance(){
     <p class="hint">${of.itemId?('Banco conectado · última sincronização: '+last):'Nenhum banco conectado ainda.'}</p>
     <div class="callout" style="margin-top:12px;line-height:1.6">Precisa do backend publicado (a pasta <b>caixa-backend</b> que eu te mandei) e roda no <b>seu domínio</b> — o widget do Pluggy não carrega na pré-visualização do Claude. Passo a passo no README.</div>
   `);
-  $('#ofSave').onclick=()=>{const o=loadOF();o.backend=$('#ofUrl').value.trim();o.token=$('#ofTok').value.trim();saveOF(o);alert('Configuração salva.');};
+  $('#ofSave').onclick=()=>{const o=loadOF();o.backend=$('#ofUrl').value.trim();o.token=$('#ofTok').value.trim();const it=$('#ofItem').value.trim();if(it)o.itemId=it;saveOF(o);alert('Configuração salva.');};
   $('#ofConnect').onclick=connectBank;
   $('#ofSync').onclick=syncBank;
 }
