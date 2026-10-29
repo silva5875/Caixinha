@@ -74,3 +74,4 @@ Toque em **Sincronizar agora** sempre que quiser puxar as novidades.
   Conexões reais em produção podem ter custo — confira os planos atuais no site do Pluggy.
 - **Segurança:** o `APP_TOKEN` fica visível em quem usa o app no navegador. Para uso
   pessoal está ok; se for abrir para mais gente, troque por um login de verdade.
+.
