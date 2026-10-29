@@ -1,0 +1,10 @@
+{
+  "name": "caixa-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Backend mínimo de Open Finance (Pluggy) para o app Caixa",
+  "engines": {
+    "node": ">=18"
+  }
+}
