@@ -462,6 +462,27 @@ function viewTx(){
   if(ui.txFilter==='income')list=list.filter(t=>t.type==='income');
   if(ui.txFilter==='expense')list=list.filter(t=>t.type==='expense');
   const {inc,exp}=sums(txInRange());
+  // agrupa por origem (cartão / conta)
+  const groups=new Map();
+  list.forEach(t=>{
+    let key,name,color,isCard=false;
+    if(t.card){const c=cardById(t.card);key='card:'+t.card;name=c?c.name:'Cartão';color=c?c.color:'#8a8a8a';isCard=true;}
+    else if(t.account){const a=accById(t.account);key='acc:'+t.account;name=a?a.name:'Conta';color=a?a.color:'#8a8a8a';}
+    else{key='none';name='Sem origem';color='#8a8a8a';}
+    if(!groups.has(key))groups.set(key,{name,color,isCard,items:[],out:0,inc:0});
+    const g=groups.get(key);g.items.push(t);t.type==='income'?g.inc+=t.amount:g.out+=t.amount;
+  });
+  const arr=[...groups.values()].sort((a,b)=>(b.isCard-a.isCard)||(b.out-a.out));
+  const blocks=arr.map(g=>{
+    const right = g.out>0?`<span style="color:var(--neg)">−${brl(g.out)}</span>`:(g.inc>0?`<span style="color:var(--pos)">+${brl(g.inc)}</span>`:brl(0));
+    return `<section class="card" style="margin-bottom:10px;overflow:hidden">
+      <div style="display:flex;align-items:center;gap:10px;padding:11px 14px;border-left:4px solid ${g.color};background:${g.color}14">
+        <span style="width:10px;height:10px;border-radius:50%;background:${g.color};display:inline-block"></span>
+        <span style="font-weight:600;font-size:14px">${g.isCard?'💳 ':''}${esc(g.name)}</span>
+        <span style="margin-left:auto;font-weight:600;font-size:14px" class="num">${right}</span>
+      </div>
+      <div class="list" style="padding:0 14px">${g.items.map(txRow).join('')}</div>
+    </section>`;}).join('');
   return `
   <div class="filters">
     <button class="chip ${ui.txFilter==='all'?'on':''}" data-filter="all">Tudo</button>
@@ -470,8 +491,8 @@ function viewTx(){
   </div>
   <div class="subtotal"><div><div style="font-size:12px;color:var(--muted);font-weight:600">neste período</div>
     <div style="font-size:13px;margin-top:2px"><span style="color:var(--pos)">+${brl(inc)}</span> &nbsp; <span style="color:var(--neg)">−${brl(exp)}</span></div></div>
-    <div class="v num ${inc-exp>=0?'':''}" style="color:${inc-exp>=0?'var(--pos)':'var(--neg)'}">${brl(inc-exp)}</div></div>
-  <section class="card" style="padding:4px 16px"><div class="list">${list.map(txRow).join('')||emptyInline()}</div></section>`;
+    <div class="v num" style="color:${inc-exp>=0?'var(--pos)':'var(--neg)'}">${brl(inc-exp)}</div></div>
+  ${blocks||emptyInline()}`;
 }
 
 /* ----- subscriptions ----- */
@@ -509,7 +530,7 @@ function viewAccounts(){
     </div>`;}).join('');
   const cardRows=S.cards.map(c=>{
     const used=cardInvoice(c);const pct=c.limit?Math.min(used/c.limit*100,100):0;
-    return `<div class="accrow" data-cardedit="${c.id}" style="display:block">
+    return `<div class="accrow" data-carddetail="${c.id}" style="display:block;cursor:pointer">
       <div style="display:flex;align-items:center;gap:12px">
         <div class="swatch" style="background:${c.color}">▭</div>
         <div class="mid"><div class="nm">${esc(c.name)}</div><div class="meta">fatura aberta · fecha dia ${c.closingDay||'—'}</div></div>
@@ -609,6 +630,7 @@ function wireViewEvents(){
   $$('[data-subedit]').forEach(el=>el.onclick=()=>openSub(el.dataset.subedit));
   $$('[data-accedit]').forEach(el=>el.onclick=()=>openAcc(el.dataset.accedit));
   $$('[data-cardedit]').forEach(el=>el.onclick=()=>openCard(el.dataset.cardedit));
+  $$('[data-carddetail]').forEach(el=>el.onclick=()=>openCardDetail(el.dataset.carddetail));
   $$('[data-goto]').forEach(el=>el.onclick=()=>{ui.view=el.dataset.goto;render();});
   $$('[data-filter]').forEach(el=>el.onclick=()=>{ui.txFilter=el.dataset.filter;render();});
   $$('[data-h]').forEach(el=>el.onclick=()=>{ui.horizon=parseInt(el.dataset.h);render();});
@@ -738,6 +760,43 @@ function openAcc(id){
 }
 
 /* card */
+function openCardDetail(id){
+  const c=cardById(id);if(!c)return;
+  const {start,end}=invoiceCycle(c);
+  const items=S.transactions.filter(t=>t.card===c.id&&t.type==='expense'&&parseD(t.date)>=start&&parseD(t.date)<=end).sort((a,b)=>b.date.localeCompare(a.date));
+  const used=items.reduce((s,t)=>s+t.amount,0);
+  const prevCount=items.filter(t=>t.previsto).length;
+  const pct=c.limit?Math.min(used/c.limit*100,100):0;
+  const avail=c.limit?Math.max(c.limit-used,0):null;
+  const fmt=d=>new Intl.DateTimeFormat('pt-BR',{day:'2-digit',month:'short'}).format(d).replace('.','');
+  openSheet(`
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+      <div class="swatch" style="background:${c.color}">▭</div>
+      <div><h2 style="margin:0;font-size:18px">${esc(c.name)}</h2>
+        <div class="hint" style="margin:0">Fatura aberta · ${fmt(start)} a ${fmt(end)}</div></div>
+    </div>
+    <div class="subtotal" style="margin-bottom:10px">
+      <div><div style="font-size:12px;color:var(--muted);font-weight:600">Total da fatura</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:4px">${items.length} lançamento(s)${prevCount?' · '+prevCount+' previsto(s)':''}</div></div>
+      <div class="v num" style="color:var(--neg)">${brl(used)}</div></div>
+    ${c.limit?`<div class="bar-mini"><span class="${pct>85?'warn':''}" style="width:${pct}%"></span></div>
+    <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin:6px 2px 0">
+      <span>limite ${brl(c.limit)}</span><span>disponível ${brl(avail)}</span></div>`:''}
+    <div style="display:flex;gap:18px;font-size:12px;color:var(--muted);margin:14px 2px 2px">
+      ${c.closingDay?`<span>Fecha dia <b style="color:var(--ink)">${c.closingDay}</b></span>`:''}
+      ${c.dueDay?`<span>Vence dia <b style="color:var(--ink)">${c.dueDay}</b></span>`:''}
+    </div>
+    <div class="sec-h" style="margin:14px 2px 6px"><h2 style="font-size:14px">Lançamentos da fatura</h2></div>
+    <div style="max-height:40vh;overflow:auto;border:1px solid var(--line);border-radius:12px;padding:2px 12px">
+      ${items.length?items.map(txRow).join(''):'<div class="hint" style="padding:14px 2px">Nenhum lançamento nesta fatura.</div>'}
+    </div>
+    <div class="sheet-actions" style="margin-top:14px"><button class="btn ghost" id="cdEdit">Editar cartão</button><button class="btn" id="cdClose">Fechar</button></div>
+  `);
+  $('#cdEdit').onclick=()=>openCard(id);
+  $('#cdClose').onclick=closeSheet;
+  $$('[data-edit]',sheet).forEach(el=>el.onclick=()=>openTx(el.dataset.edit));
+}
+
 function openCard(id){
   const c=id?S.cards.find(x=>x.id===id):null;
   openSheet(`
@@ -1006,17 +1065,32 @@ function resolveCard(sel,suggested,vencimento){
   return card.id;
 }
 
+function ensureSubscription(name,amount,ry,rm){
+  const assinCat=S.categories.find(c=>c.kind==='expense'&&c.name==='Assinaturas')?.id;
+  const existing=S.subscriptions.find(s=>normName(s.name)===normName(name));
+  if(existing){ existing.active=true; if(amount)existing.amount=amount; return {id:existing.id,created:false}; }
+  const nd=new Date(ry,rm,1); // mês seguinte ao de referência
+  const nextDate=`${nd.getFullYear()}-${String(nd.getMonth()+1).padStart(2,'0')}-01`;
+  const sub={id:uid(),name:name||'Assinatura',amount:amount||0,freq:'monthly',categoryId:assinCat,nextDate,active:true};
+  S.subscriptions.push(sub);
+  return {id:sub.id,created:true};
+}
+
 function applyFatura(compras,suggested,vencimento){
   const refStr=$('#fRef').value||monthValue(null);
   const [ry,rm]=refStr.split('-').map(Number);
   const cardId=resolveCard($('#fCard').value,suggested,vencimento);
   const outOther=S.categories.find(c=>c.kind==='expense'&&c.name==='Outros')?.id;
+  const assinCat=S.categories.find(c=>c.kind==='expense'&&c.name==='Assinaturas')?.id;
   const have=new Set(S.transactions.map(t=>t.extId).filter(Boolean));
   const slug=s=>String(s).toLowerCase().replace(/[^a-z0-9]+/g,'').slice(0,18);
-  let realN=0, prevN=0;
+  let realN=0, prevN=0, subN=0;
   compras.forEach(c=>{
     const day = c.data&&/^\d{4}-\d{2}-(\d{2})/.test(c.data) ? parseInt(c.data.slice(8,10)) : 1;
-    const cat = pluggyCat(c.descricao)||outOther;
+    const isSub = !!c.assinatura;
+    let subId=null;
+    if(isSub){ const r=ensureSubscription((c.servico||c.descricao||'Assinatura').trim(),c.valor_parcela,ry,rm); subId=r.id; if(r.created)subN++; }
+    const cat = isSub ? (assinCat||outOther) : (pluggyCat(c.descricao)||outOther);
     const total=c.parcelas_total||1, atual=c.parcela_atual||1;
     for(let k=atual;k<=total;k++){
       const off=k-atual;
@@ -1027,13 +1101,15 @@ function applyFatura(compras,suggested,vencimento){
       if(have.has(extId))continue;
       S.transactions.push({id:uid(),extId,type:'expense',amount:c.valor_parcela,
         desc:c.descricao+(total>1?` (${k}/${total})`:''),categoryId:cat,date,
-        account:null,card:cardId,subId:null,previsto});
+        account:null,card:cardId,subId,previsto});
       have.add(extId); previsto?prevN++:realN++;
     }
   });
   save();closeSheet();render();
   const cardName=cardById(cardId)?.name||'cartão';
-  alert(`Importado em "${cardName}": ${realN} lançamento(s) deste mês · ${prevN} parcela(s) futura(s).`);
+  let msg=`Importado em "${cardName}": ${realN} lançamento(s) deste mês · ${prevN} parcela(s) futura(s).`;
+  if(subN)msg+=`\n${subN} assinatura(s) detectada(s) e adicionada(s) na aba Assinaturas.`;
+  alert(msg);
 }
 function importStatement(text,name){
   let added=0; const acc=S.accounts[0]?.id;
