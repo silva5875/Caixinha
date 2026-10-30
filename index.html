@@ -9,6 +9,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <style>
 :root{
   --bg:#f4f6f7; --surface:#ffffff; --surface-2:#eef2f3; --ink:#0f1c1f; --muted:#5b6b6e;
@@ -254,7 +255,49 @@ function load(){
   try{const raw=localStorage.getItem(KEY);if(raw)return sanitizeState(JSON.parse(raw));}catch(e){}
   return seedEmpty();
 }
-function save(){ try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){} }
+function save(){ try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){} schedulePush(); }
+
+/* ---------- Supabase (login + sincronização na nuvem) ---------- */
+const SUPABASE_URL="https://vrvajpkmxwkfynsdqsut.supabase.co";
+const SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZydmFqcGtteHdrZnluc2Rxc3V0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTMzNzM1NTUsImV4cCI6MjEwODk0OTU1NX0.8fijUBUeKVaGEebjVq4VFBqoM5b6WZIknix0u53n52I";
+let sb=null, authUser=null, pushTimer=null;
+function hasData(st){ return !!(st && ((st.transactions&&st.transactions.length)||(st.subscriptions&&st.subscriptions.length)||(st.cards&&st.cards.length))); }
+function updateAuthUI(){ const el=document.getElementById('brandSub'); if(!el)return; el.textContent = authUser ? ('sincronizado · '+(authUser.email||'conta')) : 'seu dinheiro, claro'; }
+function initAuth(){
+  if(!window.supabase||!SUPABASE_URL||!SUPABASE_ANON_KEY)return;
+  try{ sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY); }catch(e){ sb=null; return; }
+  sb.auth.onAuthStateChange((_e,session)=>{ const u=session?.user||null; const was=authUser&&authUser.id; authUser=u; updateAuthUI(); if(u&&u.id!==was)syncPull(); });
+  sb.auth.getSession().then(({data})=>{ authUser=(data&&data.session&&data.session.user)||null; updateAuthUI(); if(authUser)syncPull(); }).catch(()=>{});
+}
+async function loginGoogle(){
+  if(!sb){ alert('A sincronização só funciona no seu domínio (caixinha-delta.vercel.app), não na pré-visualização.'); return; }
+  closeSheet();
+  const {error}=await sb.auth.signInWithOAuth({provider:'google',options:{redirectTo:location.origin}});
+  if(error)alert('Falha no login: '+error.message);
+}
+async function logout(){ try{ if(sb)await sb.auth.signOut(); }catch(e){} authUser=null; updateAuthUI(); closeSheet(); }
+async function syncPull(){
+  if(!sb||!authUser)return;
+  try{
+    const {data,error}=await sb.from('app_state').select('data').eq('user_id',authUser.id).maybeSingle();
+    if(error)throw error;
+    if(data&&hasData(data.data)){
+      S=sanitizeState(data.data); save(); render();
+    } else {
+      if(hasData(S)){
+        if(confirm('Primeira vez logado neste app. Enviar os dados deste aparelho para a sua conta na nuvem?')) await syncPush(true);
+      } else { await syncPush(true); }
+    }
+    updateAuthUI();
+  }catch(e){ console.error('syncPull',e); }
+}
+function schedulePush(){ if(!sb||!authUser)return; clearTimeout(pushTimer); pushTimer=setTimeout(()=>syncPush_do(),1500); }
+async function syncPush(){ return syncPush_do(); }
+async function syncPush_do(){
+  if(!sb||!authUser)return;
+  try{ await sb.from('app_state').upsert({user_id:authUser.id,data:S,updated_at:new Date().toISOString()}); }
+  catch(e){ console.error('syncPush',e); }
+}
 function seedEmpty(){
   return {
     accounts:[{id:uid(),name:'Carteira / Conta',type:'checking',opening:0,color:PALETTE[0]}],
@@ -869,6 +912,9 @@ function openCard(id){
 function openMenu(){
   openSheet(`
     <h2>Menu</h2>
+    ${authUser
+      ? `<button class="menu-item" id="mLogout"><span class="mi">☁</span><div>Conectado${authUser.email?': '+esc(authUser.email):''}<small>dados sincronizados · toque para sair</small></div></button>`
+      : `<button class="menu-item" id="mLogin"><span class="mi">☁</span><div>Entrar com Google<small>sincronizar seus dados na nuvem</small></div></button>`}
     <button class="menu-item" id="mExport"><span class="mi">↓</span><div>Fazer backup<small>baixa um arquivo .json com tudo</small></div></button>
     <button class="menu-item" id="mImportJson"><span class="mi">↑</span><div>Restaurar backup<small>carrega um .json salvo antes</small></div></button>
     <button class="menu-item" id="mImportCsv"><span class="mi">≣</span><div>Importar extrato<small>arquivo CSV ou OFX do banco</small></div></button>
@@ -877,6 +923,8 @@ function openMenu(){
     <button class="menu-item" id="mOF"><span class="mi">⇄</span><div>Open Finance<small>conectar bancos automaticamente</small></div></button>
     <button class="menu-item" id="mWipe" style="color:var(--neg)"><span class="mi">⌫</span><div>Apagar todos os dados<small>recomeçar do zero</small></div></button>
   `);
+  const mL=$('#mLogin');if(mL)mL.onclick=loginGoogle;
+  const mLo=$('#mLogout');if(mLo)mLo.onclick=()=>{ if(confirm('Sair da conta? Seus dados continuam salvos na nuvem e neste aparelho.'))logout(); };
   $('#mExport').onclick=exportJson;
   $('#mImportJson').onclick=()=>pickFile('json');
   $('#mImportCsv').onclick=()=>pickFile('csv');
@@ -1252,6 +1300,7 @@ $('#menuBtn').onclick=openMenu;
 window.addEventListener('keydown',e=>{if(e.key==='Escape')closeSheet();});
 
 render();
+initAuth();
 </script>
 </body>
 </html>
