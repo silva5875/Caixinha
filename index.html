@@ -225,6 +225,7 @@ input,select{font-family:inherit;font-size:16px}
 <nav class="tabbar" id="tabbar">
   <button data-v="overview" class="on"><span class="ti">◉</span>Visão</button>
   <button data-v="tx"><span class="ti">≣</span>Lançamentos</button>
+  <button data-v="forecast"><span class="ti">↗</span>Previsão</button>
   <button data-v="subs"><span class="ti">↻</span>Assinaturas</button>
   <button data-v="accounts"><span class="ti">▦</span>Contas</button>
 </nav>
@@ -247,7 +248,7 @@ const PALETTE=['#0b6e6e','#e07a3f','#3b7dd8','#8a4fc4','#2f9e5a','#d8475a','#c99
 /* ---------- state ---------- */
 const KEY='caixa.v1';
 let S=load();
-let ui={view:'overview',period:'month',ref:new Date(), txFilter:'all'};
+let ui={view:'overview',period:'month',ref:new Date(), txFilter:'all', horizon:6, fcOpen:new Set()};
 
 function load(){
   try{const raw=localStorage.getItem(KEY);if(raw)return JSON.parse(raw);}catch(e){}
@@ -373,10 +374,12 @@ function render(){
   const v=$('#view');
   if(ui.view==='overview')v.innerHTML=viewOverview();
   else if(ui.view==='tx')v.innerHTML=viewTx();
+  else if(ui.view==='forecast')v.innerHTML=viewForecast();
   else if(ui.view==='subs')v.innerHTML=viewSubs();
   else v.innerHTML=viewAccounts();
   // post-render (charts)
   if(ui.view==='overview')drawOverviewCharts();
+  else if(ui.view==='forecast')drawForecastChart();
   wireViewEvents();
 }
 
@@ -530,6 +533,71 @@ function viewAccounts(){
   </div></section>`;
 }
 
+/* ----- forecast ----- */
+const sameMonth=(a,b)=>a.getFullYear()===b.getFullYear()&&a.getMonth()===b.getMonth();
+const mKey=d=>`${d.getFullYear()}-${d.getMonth()}`;
+const mShort=d=>new Intl.DateTimeFormat('pt-BR',{month:'short'}).format(d).replace('.','');
+const mFull=d=>{const s=new Intl.DateTimeFormat('pt-BR',{month:'long',year:'numeric'}).format(d);return s.charAt(0).toUpperCase()+s.slice(1);};
+function forecastData(){
+  const n=ui.horizon||6;
+  const base=new Date();base.setDate(1);
+  const subsMonthly=S.subscriptions.filter(s=>s.active!==false).reduce((a,s)=>a+monthlyCost(s),0);
+  const out=[];
+  for(let i=0;i<n;i++){
+    const d=new Date(base.getFullYear(),base.getMonth()+i,1);
+    const items=S.transactions.filter(t=>t.previsto&&sameMonth(parseD(t.date),d)).sort((a,b)=>b.amount-a.amount);
+    const parcelas=items.reduce((a,t)=>a+t.amount,0);
+    out.push({d,items,parcelas,assin:subsMonthly,total:parcelas+subsMonthly});
+  }
+  return out;
+}
+function viewForecast(){
+  const n=ui.horizon||6;
+  const data=forecastData();
+  const grand=data.reduce((a,m)=>a+m.total,0);
+  const temParcelas=data.some(m=>m.parcelas>0);
+  const rows=data.map(m=>{
+    const key=mKey(m.d), open=ui.fcOpen.has(key);
+    return `<section class="card" style="margin-bottom:10px">
+      <div class="accrow" data-fc="${key}" style="cursor:pointer">
+        <div class="swatch" style="background:var(--surface-2);color:var(--muted);font-size:12px">${esc(mShort(m.d))}</div>
+        <div class="mid"><div class="nm">${esc(mFull(m.d))}</div>
+          <div class="meta">parcelas ${brl(m.parcelas)} · assinaturas ${brl(m.assin)}</div></div>
+        <div class="right"><div class="v num" style="color:var(--neg)">${brl(m.total)}</div>
+          <div style="font-size:11px;color:var(--muted)">${open?'▲':'▼'}</div></div>
+      </div>
+      ${open?`<div class="list" style="padding:0 16px 8px">${m.items.length?m.items.map(txRow).join(''):'<div class="hint" style="padding:10px 2px">Sem parcelas previstas — só as assinaturas ('+brl(m.assin)+').</div>'}</div>`:''}
+    </section>`;}).join('');
+  return `
+  <div class="sec-h" style="margin-top:6px"><h2>Previsão de gastos</h2><span class="sub">parcelas + assinaturas</span></div>
+  <section class="card hero" style="padding:18px;margin-bottom:12px">
+    <div class="cap">Comprometido nos próximos ${n} meses</div>
+    <div class="bal num neg" style="font-size:32px">${brl(grand)}</div>
+    <div style="font-size:12px;color:var(--muted);margin-top:4px">média de ${brl(grand/n)} por mês</div>
+  </section>
+  <div class="seg" style="margin:0 0 12px">
+    <button data-h="6" class="${n===6?'on':''}">6 meses</button>
+    <button data-h="12" class="${n===12?'on':''}">12 meses</button>
+  </div>
+  <section class="card chartcard"><div class="barwrap"><canvas id="fcbars"></canvas></div></section>
+  <div class="sec-h"><h2>Mês a mês</h2><span class="sub">toque para detalhar</span></div>
+  ${rows}
+  ${!temParcelas?'<p class="hint" style="text-align:center;margin-top:8px">Importe uma fatura (menu ≡) com compras parceladas para ver as parcelas futuras aqui.</p>':''}
+  `;
+}
+function drawForecastChart(){
+  const bc=$('#fcbars');if(!bc)return;
+  const data=forecastData();
+  const ink=cssv('--ink'),muted=cssv('--muted'),line=cssv('--line');
+  charts.fcbars=new Chart(bc,{type:'bar',data:{labels:data.map(m=>mShort(m.d)),datasets:[
+    {label:'Parcelas',data:data.map(m=>m.parcelas),backgroundColor:cssv('--neg'),borderRadius:5,maxBarThickness:30,stack:'s'},
+    {label:'Assinaturas',data:data.map(m=>m.assin),backgroundColor:cssv('--accent'),borderRadius:5,maxBarThickness:30,stack:'s'}]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{labels:{color:ink,boxWidth:10,boxHeight:10,usePointStyle:true,font:{family:'Inter',size:12}}},tooltip:{callbacks:{label:c=>c.dataset.label+': '+brl(c.raw)}}},
+      scales:{x:{stacked:true,grid:{display:false},ticks:{color:muted,font:{size:11}}},
+        y:{stacked:true,grid:{color:line},ticks:{color:muted,font:{size:11},callback:v=>v>=1000?(v/1000)+'k':v}}}}});
+}
+
 /* ----- empty states ----- */
 function emptyInline(msg='Nada por aqui ainda'){return `<div class="empty" style="padding:26px"><p style="margin:0">${msg}</p></div>`;}
 function emptyBlock(title,sub){return `<section class="card"><div class="empty"><div class="big">◔</div><h3>${title}</h3><p>${sub}</p>
@@ -543,6 +611,8 @@ function wireViewEvents(){
   $$('[data-cardedit]').forEach(el=>el.onclick=()=>openCard(el.dataset.cardedit));
   $$('[data-goto]').forEach(el=>el.onclick=()=>{ui.view=el.dataset.goto;render();});
   $$('[data-filter]').forEach(el=>el.onclick=()=>{ui.txFilter=el.dataset.filter;render();});
+  $$('[data-h]').forEach(el=>el.onclick=()=>{ui.horizon=parseInt(el.dataset.h);render();});
+  $$('[data-fc]').forEach(el=>el.onclick=()=>{const k=el.dataset.fc;ui.fcOpen.has(k)?ui.fcOpen.delete(k):ui.fcOpen.add(k);render();});
   const g=$('#addSub');if(g)g.onclick=()=>openSub();
   const a=$('#addAcc');if(a)a.onclick=()=>openAcc();
   const c=$('#addCard');if(c)c.onclick=()=>openCard();
