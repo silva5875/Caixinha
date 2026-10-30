@@ -26,12 +26,18 @@ Regras importantes:
 - Se o valor_total não estiver explícito numa compra parcelada, calcule valor_parcela multiplicado por parcelas_total.
 - Para compras à vista: parcela_atual = 1, parcelas_total = 1, valor_parcela = valor_total.
 - IGNORE pagamentos, estornos, créditos, juros, encargos, IOF e anuidade. Apenas compras de despesa.
-- Se identificar o vencimento ou o mês de referência da fatura, inclua em fatura_vencimento (YYYY-MM-DD).`;
+- Se identificar o vencimento ou o mês de referência da fatura, inclua em fatura_vencimento (YYYY-MM-DD).
+- Identifique o banco/emissor do cartão (ex.: Nubank, Banco Inter, Itaú, Bradesco, C6 Bank, Santander, Caixa, BTG, XP, PicPay, Will, Neon, etc.) e coloque em "emissor".
+- Se aparecerem os 4 últimos dígitos do cartão, coloque em "cartao_final" (só os 4 dígitos).
+- Se identificar a bandeira (Visa, Mastercard, Elo, Amex, Hipercard), coloque em "bandeira".`;
 
 const SCHEMA = {
   type: "object",
   properties: {
     fatura_vencimento: { type: "string" },
+    emissor: { type: "string" },
+    cartao_final: { type: "string" },
+    bandeira: { type: "string" },
     compras: {
       type: "array",
       items: {
@@ -122,7 +128,13 @@ export default async function handler(req, res) {
           parsed = m ? JSON.parse(m[0]) : { compras: [] };
         }
         const compras = normalize(parsed.compras || []);
-        return res.status(200).json({ fatura_vencimento: parsed.fatura_vencimento || null, compras });
+        return res.status(200).json({
+          fatura_vencimento: parsed.fatura_vencimento || null,
+          emissor: parsed.emissor || null,
+          cartao_final: parsed.cartao_final || null,
+          bandeira: parsed.bandeira || null,
+          compras,
+        });
       }
       const msg = g.data?.error?.message || "";
       lastErr = msg || "HTTP " + g.status;
