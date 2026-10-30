@@ -36,6 +36,7 @@ Regras importantes:
 - Quando a linha indicar parcelamento (ex.: "03/10", "PARC 3/10", "3 de 10"), preencha parcela_atual e parcelas_total.
 - Se o valor_total não estiver explícito numa compra parcelada, calcule valor_parcela multiplicado por parcelas_total.
 - Para compras à vista: parcela_atual = 1, parcelas_total = 1, valor_parcela = valor_total.
+- Marque "assinatura": true quando a compra for um serviço recorrente de assinatura (streaming e afins: Netflix, HBO Max, Max, Prime Video, Amazon Prime, Disney+, Star+, Globoplay, Paramount+, Apple TV, Spotify, Deezer, YouTube Premium, Apple, iCloud, Google One, academias, e softwares/apps por assinatura). Em "servico", escreva o nome normalizado do serviço (ex.: "Netflix", "Spotify", "Amazon Prime"). Para compras comuns, "assinatura": false.
 - IGNORE pagamentos, estornos, créditos, juros, encargos, IOF e anuidade. Apenas compras de despesa.
 - Se identificar o vencimento ou o mês de referência da fatura, inclua em fatura_vencimento (YYYY-MM-DD).
 - Identifique o banco/emissor do cartão (ex.: Nubank, Banco Inter, Itaú, Bradesco, C6 Bank, Santander, Caixa, BTG, XP, PicPay, Will, Neon, etc.) e coloque em "emissor".
@@ -60,6 +61,8 @@ const SCHEMA = {
           parcela_atual: { type: "integer" },
           parcelas_total: { type: "integer" },
           valor_parcela: { type: "number" },
+          assinatura: { type: "boolean" },
+          servico: { type: "string" },
         },
         required: ["descricao", "valor_parcela"],
       },
@@ -193,6 +196,8 @@ function normalize(list) {
         valor_parcela: round2(vParc),
         parcela_atual: atual,
         parcelas_total: total,
+        assinatura: !!c.assinatura,
+        servico: String(c.servico || "").trim(),
       };
     })
     .filter((c) => c.valor_parcela > 0);
