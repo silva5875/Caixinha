@@ -251,7 +251,7 @@ let S=load();
 let ui={view:'overview',period:'month',ref:new Date(), txFilter:'all', horizon:6, fcOpen:new Set()};
 
 function load(){
-  try{const raw=localStorage.getItem(KEY);if(raw)return JSON.parse(raw);}catch(e){}
+  try{const raw=localStorage.getItem(KEY);if(raw)return sanitizeState(JSON.parse(raw));}catch(e){}
   return seedEmpty();
 }
 function save(){ try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){} }
@@ -270,6 +270,47 @@ function defaultCats(){
   let i=0;const out=[];
   ex.forEach(n=>out.push({id:uid(),name:n,kind:'expense',color:PALETTE[i++%PALETTE.length]}));
   i=2; inc.forEach(n=>out.push({id:uid(),name:n,kind:'income',color:PALETTE[i++%PALETTE.length]}));
+  return out;
+}
+/* ---------- DTO / validação de estado (defesa em profundidade) ---------- */
+const _str=(v,max)=> (v==null?'':String(v)).slice(0,max);
+const _num=v=>{const n=Number(v);return Number.isFinite(n)?n:0;};
+const _enum=(v,arr,def)=>arr.includes(v)?v:def;
+const _date=v=>/^\d{4}-\d{2}-\d{2}$/.test(v)?v:todayStr();
+const _day=(v,def=1)=>{const n=parseInt(v);return Number.isFinite(n)?Math.min(Math.max(n,1),31):def;};
+function sanitizeState(raw){
+  if(!raw||typeof raw!=='object')return seedEmpty();
+  const out={accounts:[],cards:[],categories:[],transactions:[],subscriptions:[]};
+  const cats=(Array.isArray(raw.categories)&&raw.categories.length?raw.categories:defaultCats()).slice(0,300);
+  out.categories=cats.map(c=>({id:_str(c.id,64)||uid(),name:_str(c.name,60)||'Categoria',kind:_enum(c.kind,['expense','income'],'expense'),color:_str(c.color,16)||'#888888'}));
+  const catIds=new Set(out.categories.map(c=>c.id));
+  out.accounts=(Array.isArray(raw.accounts)?raw.accounts:[]).slice(0,200).map(a=>{
+    const o={id:_str(a.id,64)||uid(),name:_str(a.name,80)||'Conta',type:_enum(a.type,['checking','savings','wallet','cash'],'checking'),opening:_num(a.opening),color:_str(a.color,16)||'#888888'};
+    if(a.extId)o.extId=_str(a.extId,128);
+    if(typeof a.reported==='number')o.reported=_num(a.reported);
+    return o;
+  });
+  if(!out.accounts.length)out.accounts=seedEmpty().accounts;
+  out.cards=(Array.isArray(raw.cards)?raw.cards:[]).slice(0,200).map(c=>{
+    const o={id:_str(c.id,64)||uid(),name:_str(c.name,80)||'Cartão',limit:_num(c.limit),closingDay:_day(c.closingDay,1),dueDay:c.dueDay?_day(c.dueDay,null):null,color:_str(c.color,16)||'#888888'};
+    if(c.extId)o.extId=_str(c.extId,128);
+    return o;
+  });
+  const accIds=new Set(out.accounts.map(a=>a.id));
+  const cardIds=new Set(out.cards.map(c=>c.id));
+  out.transactions=(Array.isArray(raw.transactions)?raw.transactions:[]).slice(0,50000).map(t=>{
+    const o={id:_str(t.id,64)||uid(),type:_enum(t.type,['income','expense'],'expense'),amount:Math.abs(_num(t.amount)),
+      desc:_str(t.desc,200),categoryId:catIds.has(t.categoryId)?t.categoryId:null,date:_date(t.date),
+      account:accIds.has(t.account)?t.account:null,card:cardIds.has(t.card)?t.card:null,
+      subId:_str(t.subId,64)||null,previsto:!!t.previsto};
+    if(t.extId)o.extId=_str(t.extId,200);
+    return o;
+  }).filter(t=>t.amount>0);
+  out.subscriptions=(Array.isArray(raw.subscriptions)?raw.subscriptions:[]).slice(0,1000).map(s=>({
+    id:_str(s.id,64)||uid(),name:_str(s.name,80)||'Assinatura',amount:Math.abs(_num(s.amount)),
+    freq:_enum(s.freq,['monthly','yearly','weekly'],'monthly'),categoryId:catIds.has(s.categoryId)?s.categoryId:null,
+    nextDate:_date(s.nextDate),active:s.active!==false
+  }));
   return out;
 }
 const catById=id=>S.categories.find(c=>c.id===id);
@@ -980,7 +1021,7 @@ $('#fileIn').onchange=e=>{
   rd.onload=()=>{
     try{
       if(importMode==='json'){ const data=JSON.parse(rd.result);
-        if(data.transactions){S=Object.assign(seedEmpty(),data);save();closeSheet();render();alert('Backup restaurado.');}
+        if(data.transactions){S=sanitizeState(data);save();closeSheet();render();alert('Backup restaurado e validado.');}
       } else { importStatement(rd.result,f.name); }
     }catch(err){alert('Não consegui ler esse arquivo. Verifique o formato.');}
   };
