@@ -6,16 +6,20 @@ import { cors, authed } from "./_pluggy.js";
 // Tenta novamente de forma automática quando o modelo está sobrecarregado,
 // e cai para um modelo alternativo se o principal continuar indisponível.
 
-const PRIMARY = process.env.GEMINI_MODEL || "gemini-2.5-flash";
-// Cascata: tenta na ordem; se um estiver sobrecarregado, pula pro próximo na hora.
-// Os "lite" costumam ter mais capacidade livre nos picos.
+const PRIMARY = process.env.GEMINI_MODEL || "gemini-flash-lite-latest";
+// Cascata com modelos ATUAIS (Gemini 3, out/2026). Os "lite" vêm primeiro:
+// são rápidos e têm mais capacidade livre em horário de pico. Flash como reforço.
 const CASCADE = [
-  "gemini-2.0-flash",
-  "gemini-2.5-flash-lite",
-  "gemini-2.0-flash-lite",
+  "gemini-flash-lite-latest",
+  "gemini-3.5-flash-lite",
+  "gemini-3.1-flash-lite",
   "gemini-flash-latest",
+  "gemini-3.5-flash",
+  "gemini-3.6-flash",
 ];
-const MODELS = [...new Set([PRIMARY, ...CASCADE])];
+// Ignora automaticamente famílias já aposentadas (2.5 / 2.0 / 1.5),
+// mesmo que GEMINI_MODEL ainda esteja com um valor antigo.
+const MODELS = [...new Set([PRIMARY, ...CASCADE])].filter((m) => !/2\.5|2\.0|1\.5/.test(m));
 
 const PROMPT = `Você é um extrator de dados de faturas de cartão de crédito brasileiras.
 Analise o PDF da fatura e extraia TODAS as compras/lançamentos de despesa.
@@ -67,12 +71,10 @@ const SCHEMA = {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const supportsThinking = (model) => !/2\.0/.test(model);
 
-function buildBody(pdf, model) {
-  const g = { responseMimeType: "application/json", responseSchema: SCHEMA, temperature: 0 };
-  if (supportsThinking(model)) g.thinkingConfig = { thinkingBudget: 0 };
+function buildBody(pdf) {
   return {
     contents: [{ parts: [{ inline_data: { mime_type: "application/pdf", data: pdf } }, { text: PROMPT }] }],
-    generationConfig: g,
+    generationConfig: { responseMimeType: "application/json", responseSchema: SCHEMA },
   };
 }
 
