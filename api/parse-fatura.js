@@ -106,15 +106,18 @@ export default async function handler(req, res) {
   const comma = pdf.indexOf(",");
   if (pdf.startsWith("data:") && comma !== -1) pdf = pdf.slice(comma + 1);
 
-  let lastErr = "falha ao chamar a IA";
-  for (const model of MODELS) {
-    for (let attempt = 0; attempt < 3; attempt++) {
+  const start = Date.now();
+  const DEADLINE = 45000; // para bem antes do limite de 60s da Vercel
+  let lastErr = "";
+  outer: for (const model of MODELS) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (Date.now() - start > DEADLINE) break outer;
       let g;
       try {
         g = await callGemini(model, pdf, key);
       } catch (e) {
         lastErr = String(e.message || e);
-        await sleep(1000);
+        await sleep(600);
         continue;
       }
       if (g.ok) {
@@ -139,13 +142,18 @@ export default async function handler(req, res) {
       const msg = g.data?.error?.message || "";
       lastErr = msg || "HTTP " + g.status;
       if (isTransient(g.status, msg)) {
-        await sleep(1200 * (attempt + 1)); // 1.2s, 2.4s, 3.6s
+        await sleep(700 * (attempt + 1)); // 0.7s, 1.4s
         continue;
       }
       break; // erro não-transitório: tenta o próximo modelo
     }
   }
-  return res.status(502).json({ error: lastErr });
+  const overloaded = /high demand|overloaded|unavailable|resource_exhausted|try again/i.test(lastErr);
+  return res.status(503).json({
+    error: overloaded
+      ? "A IA está muito ocupada agora. Tente novamente em alguns segundos."
+      : lastErr || "Não consegui processar a fatura. Tente novamente.",
+  });
 }
 
 function normalize(list) {
