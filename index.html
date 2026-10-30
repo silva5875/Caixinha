@@ -231,7 +231,7 @@ input,select{font-family:inherit;font-size:16px}
 
 <!-- modal host -->
 <div class="scrim" id="scrim"><div class="sheet" id="sheet"></div></div>
-<input type="file" id="fileIn" class="file" accept=".json,.csv,.ofx">
+<input type="file" id="fileIn" class="file" accept=".json,.csv,.ofx,.pdf">
 
 <script>
 "use strict";
@@ -447,9 +447,9 @@ function txRow(t){
   const src = t.card?cardById(t.card)?.name : accById(t.account)?.name;
   const col=c?c.color:'#888';
   const d=new Intl.DateTimeFormat('pt-BR',{day:'2-digit',month:'short'}).format(parseD(t.date)).replace('.','');
-  return `<div class="tx" data-edit="${t.id}">
-    <div class="ic" style="background:${col}22;color:${col}">${t.type==='income'?'↑':esc(catIcon(c?.name))}</div>
-    <div class="mid"><div class="d">${esc(t.desc||(c?c.name:'Lançamento'))}${t.subId?'<span class="tag">assinatura</span>':''}</div>
+  return `<div class="tx" data-edit="${t.id}" style="${t.previsto?'opacity:.62':''}">
+    <div class="ic" style="background:${col}22;color:${col}">${t.previsto?'⟳':(t.type==='income'?'↑':esc(catIcon(c?.name)))}</div>
+    <div class="mid"><div class="d">${esc(t.desc||(c?c.name:'Lançamento'))}${t.subId?'<span class="tag">assinatura</span>':''}${t.previsto?'<span class="tag">previsto</span>':''}</div>
       <div class="m">${d} · ${esc(c?c.name:'—')} · ${esc(src||'—')}</div></div>
     <div class="amt num ${t.type==='income'?'in':'out'}">${t.type==='income'?'+':'−'} ${brl(t.amount)}</div>
   </div>`;
@@ -702,6 +702,7 @@ function openMenu(){
     <button class="menu-item" id="mExport"><span class="mi">↓</span><div>Fazer backup<small>baixa um arquivo .json com tudo</small></div></button>
     <button class="menu-item" id="mImportJson"><span class="mi">↑</span><div>Restaurar backup<small>carrega um .json salvo antes</small></div></button>
     <button class="menu-item" id="mImportCsv"><span class="mi">≣</span><div>Importar extrato<small>arquivo CSV ou OFX do banco</small></div></button>
+    <button class="menu-item" id="mImportPdf"><span class="mi">✦</span><div>Importar fatura (PDF)<small>a IA lê as compras e parcelas</small></div></button>
     <button class="menu-item" id="mCats"><span class="mi">◍</span><div>Categorias<small>${S.categories.length} cadastradas</small></div></button>
     <button class="menu-item" id="mOF"><span class="mi">⇄</span><div>Open Finance<small>conectar bancos automaticamente</small></div></button>
     <button class="menu-item" id="mWipe" style="color:var(--neg)"><span class="mi">⌫</span><div>Apagar todos os dados<small>recomeçar do zero</small></div></button>
@@ -709,6 +710,7 @@ function openMenu(){
   $('#mExport').onclick=exportJson;
   $('#mImportJson').onclick=()=>pickFile('json');
   $('#mImportCsv').onclick=()=>pickFile('csv');
+  $('#mImportPdf').onclick=()=>pickFile('pdf');
   $('#mOF').onclick=openOpenFinance;
   $('#mCats').onclick=openCats;
   $('#mWipe').onclick=()=>{ if(confirm('Apagar tudo? Faça um backup antes se quiser guardar.')){S=seedEmpty();save();closeSheet();render();} };
@@ -841,6 +843,11 @@ let importMode='json';
 function pickFile(mode){importMode=mode;$('#fileIn').value='';$('#fileIn').click();}
 $('#fileIn').onchange=e=>{
   const f=e.target.files[0];if(!f)return;const rd=new FileReader();
+  if(importMode==='pdf'){
+    rd.onload=()=>importFaturaPDF(rd.result);
+    rd.readAsDataURL(f);
+    return;
+  }
   rd.onload=()=>{
     try{
       if(importMode==='json'){ const data=JSON.parse(rd.result);
@@ -850,6 +857,83 @@ $('#fileIn').onchange=e=>{
   };
   rd.readAsText(f);
 };
+
+/* ---------- import fatura (PDF + IA) ---------- */
+async function importFaturaPDF(dataUrl){
+  const of=loadOF();
+  if(!of.backend){alert('Configure o servidor em Open Finance primeiro (URL + token).');return;}
+  const b64=(dataUrl.split(',')[1])||'';
+  openSheet('<div class="grip"></div><h2>Lendo a fatura…</h2><p class="hint">A IA está extraindo as compras. Isso leva alguns segundos.</p>');
+  let data;
+  try{
+    const r=await fetch(of.backend.replace(/\/+$/,'')+'/api/parse-fatura',{method:'POST',headers:ofHeaders(of),body:JSON.stringify({pdf:b64})});
+    data=await r.json();
+    if(!r.ok)throw new Error(data.error||('HTTP '+r.status));
+  }catch(err){alert('Não consegui ler a fatura: '+err.message);closeSheet();return;}
+  const compras=(data.compras||[]).filter(c=>c.valor_parcela>0);
+  if(!compras.length){alert('A IA não encontrou compras nesse PDF. Tente outra fatura.');closeSheet();return;}
+  faturaPreview(compras,data.fatura_vencimento);
+}
+
+function monthValue(iso){ const d=iso&&/^\d{4}-\d{2}/.test(iso)?new Date(iso):new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; }
+
+function faturaPreview(compras,vencimento){
+  const refMonth=monthValue(vencimento);
+  const totalMes=compras.reduce((s,c)=>s+c.valor_parcela,0);
+  const parceladas=compras.filter(c=>c.parcelas_total>1).length;
+  const rows=compras.map((c,i)=>`<div class="tx" style="padding:10px 2px">
+    <div class="mid"><div class="d">${esc(c.descricao)}${c.parcelas_total>1?`<span class="tag">${c.parcela_atual}/${c.parcelas_total}</span>`:''}</div>
+      <div class="m">${c.data?new Intl.DateTimeFormat('pt-BR',{day:'2-digit',month:'short'}).format(parseD(c.data)).replace('.',''):'—'}${c.parcelas_total>1?' · total '+brl(c.valor_total):''}</div></div>
+    <div class="amt num out">${brl(c.valor_parcela)}</div></div>`).join('');
+  const cardSel = S.cards.length
+    ? `<select id="fCard">${S.cards.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>`
+    : `<input id="fCard" value="Cartão de crédito" readonly>`;
+  openSheet(`<h2>Fatura · ${compras.length} compras</h2>
+    <div class="row2">
+      <div class="field"><label>Mês de referência</label><input id="fRef" type="month" value="${refMonth}"></div>
+      <div class="field"><label>Cartão</label>${cardSel}</div>
+    </div>
+    <div class="subtotal"><div><div style="font-size:12px;color:var(--muted);font-weight:600">parcelas deste mês</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:4px">${parceladas} compra(s) parcelada(s)</div></div>
+      <div class="v num" style="color:var(--neg)">${brl(totalMes)}</div></div>
+    <div style="max-height:34vh;overflow:auto;border:1px solid var(--line);border-radius:12px;padding:2px 12px;margin-bottom:8px">${rows}</div>
+    <p class="hint">Vou lançar a parcela deste mês como gasto normal e criar as parcelas futuras como <b>previsto</b> nos próximos meses, pra montar sua previsão. Revise antes de confirmar.</p>
+    <div class="sheet-actions"><button class="btn ghost" id="fCancel">Cancelar</button><button class="btn" id="fImport">Importar</button></div>`);
+  $('#fCancel').onclick=closeSheet;
+  $('#fImport').onclick=()=>applyFatura(compras);
+}
+
+function applyFatura(compras){
+  const refStr=$('#fRef').value||monthValue(null);
+  const [ry,rm]=refStr.split('-').map(Number);
+  // cartão
+  let cardId;
+  if(S.cards.length){ cardId=$('#fCard').value; }
+  else { const nc={id:uid(),name:'Cartão de crédito',limit:0,closingDay:1,dueDay:null,color:PALETTE[1]}; S.cards.push(nc); cardId=nc.id; }
+  const outOther=S.categories.find(c=>c.kind==='expense'&&c.name==='Outros')?.id;
+  const have=new Set(S.transactions.map(t=>t.extId).filter(Boolean));
+  const slug=s=>String(s).toLowerCase().replace(/[^a-z0-9]+/g,'').slice(0,18);
+  let realN=0, prevN=0;
+  compras.forEach(c=>{
+    const day = c.data&&/^\d{4}-\d{2}-(\d{2})/.test(c.data) ? parseInt(c.data.slice(8,10)) : 1;
+    const cat = pluggyCat(c.descricao)||outOther;
+    const total=c.parcelas_total||1, atual=c.parcela_atual||1;
+    for(let k=atual;k<=total;k++){
+      const off=k-atual;
+      const d=new Date(ry, (rm-1)+off, Math.min(day,28));
+      const date=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+      const previsto = off>0;
+      const extId=`fat:${slug(c.descricao)}:${total}:${Math.round(c.valor_parcela*100)}:${ry}-${rm}:${k}`;
+      if(have.has(extId))continue;
+      S.transactions.push({id:uid(),extId,type:'expense',amount:c.valor_parcela,
+        desc:c.descricao+(total>1?` (${k}/${total})`:''),categoryId:cat,date,
+        account:null,card:cardId,subId:null,previsto});
+      have.add(extId); previsto?prevN++:realN++;
+    }
+  });
+  save();closeSheet();render();
+  alert(`${realN} lançamento(s) deste mês · ${prevN} parcela(s) futura(s) como previsto.`);
+}
 function importStatement(text,name){
   let added=0; const acc=S.accounts[0]?.id;
   const outCat=S.categories.find(c=>c.kind==='expense'&&c.name==='Outros')?.id;
