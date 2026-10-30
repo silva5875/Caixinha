@@ -76,6 +76,7 @@ export default async function handler(req, res) {
       responseMimeType: "application/json",
       responseSchema: SCHEMA,
       temperature: 0,
+      thinkingConfig: { thinkingBudget: 0 },
     },
   };
 
