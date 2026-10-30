@@ -1,11 +1,14 @@
 import { cors, authed } from "./_pluggy.js";
 
 // POST /api/parse-fatura   body: { pdf: "<base64 sem prefixo data:>" }
-// Lê a fatura (PDF) com o Gemini e devolve as compras já estruturadas:
-// { fatura_vencimento, compras: [{descricao, data, valor_total, parcela_atual, parcelas_total, valor_parcela}] }
+// Lê a fatura (PDF) com o Gemini e devolve as compras já estruturadas.
 // A GEMINI_API_KEY fica só aqui, no servidor (variável de ambiente).
+// Tenta novamente de forma automática quando o modelo está sobrecarregado,
+// e cai para um modelo alternativo se o principal continuar indisponível.
 
-const MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
+const PRIMARY = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+const FALLBACKS = ["gemini-2.0-flash", "gemini-flash-latest"];
+const MODELS = [...new Set([PRIMARY, ...FALLBACKS])];
 
 const PROMPT = `Você é um extrator de dados de faturas de cartão de crédito brasileiras.
 Analise o PDF da fatura e extraia TODAS as compras/lançamentos de despesa.
@@ -48,6 +51,41 @@ const SCHEMA = {
   required: ["compras"],
 };
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const supportsThinking = (model) => !/2\.0/.test(model);
+
+function buildBody(pdf, model) {
+  const g = { responseMimeType: "application/json", responseSchema: SCHEMA, temperature: 0 };
+  if (supportsThinking(model)) g.thinkingConfig = { thinkingBudget: 0 };
+  return {
+    contents: [{ parts: [{ inline_data: { mime_type: "application/pdf", data: pdf } }, { text: PROMPT }] }],
+    generationConfig: g,
+  };
+}
+
+function isTransient(status, msg) {
+  if (status === 429 || status === 500 || status === 503) return true;
+  const m = (msg || "").toLowerCase();
+  return (
+    m.includes("high demand") ||
+    m.includes("overloaded") ||
+    m.includes("unavailable") ||
+    m.includes("try again") ||
+    m.includes("resource_exhausted")
+  );
+}
+
+async function callGemini(model, pdf, key) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(buildBody(pdf, model)),
+  });
+  const data = await r.json().catch(() => ({}));
+  return { ok: r.ok, status: r.status, data };
+}
+
 export default async function handler(req, res) {
   cors(req, res);
   if (req.method === "OPTIONS") return res.status(204).end();
@@ -59,52 +97,43 @@ export default async function handler(req, res) {
 
   let pdf = req.body?.pdf;
   if (!pdf) return res.status(400).json({ error: "envie o PDF em base64 no campo 'pdf'" });
-  // aceita com ou sem prefixo data:
   const comma = pdf.indexOf(",");
   if (pdf.startsWith("data:") && comma !== -1) pdf = pdf.slice(comma + 1);
 
-  const body = {
-    contents: [
-      {
-        parts: [
-          { inline_data: { mime_type: "application/pdf", data: pdf } },
-          { text: PROMPT },
-        ],
-      },
-    ],
-    generationConfig: {
-      responseMimeType: "application/json",
-      responseSchema: SCHEMA,
-      temperature: 0,
-      thinkingConfig: { thinkingBudget: 0 },
-    },
-  };
-
-  try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${encodeURIComponent(key)}`;
-    const r = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const data = await r.json();
-    if (!r.ok) {
-      return res.status(r.status).json({ error: data?.error?.message || "falha no Gemini", raw: data });
+  let lastErr = "falha ao chamar a IA";
+  for (const model of MODELS) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      let g;
+      try {
+        g = await callGemini(model, pdf, key);
+      } catch (e) {
+        lastErr = String(e.message || e);
+        await sleep(1000);
+        continue;
+      }
+      if (g.ok) {
+        const text =
+          g.data?.candidates?.[0]?.content?.parts?.map((p) => p.text).filter(Boolean).join("") || "";
+        let parsed;
+        try {
+          parsed = JSON.parse(text);
+        } catch {
+          const m = text.match(/\{[\s\S]*\}/);
+          parsed = m ? JSON.parse(m[0]) : { compras: [] };
+        }
+        const compras = normalize(parsed.compras || []);
+        return res.status(200).json({ fatura_vencimento: parsed.fatura_vencimento || null, compras });
+      }
+      const msg = g.data?.error?.message || "";
+      lastErr = msg || "HTTP " + g.status;
+      if (isTransient(g.status, msg)) {
+        await sleep(1200 * (attempt + 1)); // 1.2s, 2.4s, 3.6s
+        continue;
+      }
+      break; // erro não-transitório: tenta o próximo modelo
     }
-    const text = data?.candidates?.[0]?.content?.parts?.map((p) => p.text).filter(Boolean).join("") || "";
-    let parsed;
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      // fallback: tenta achar o primeiro { ... } no texto
-      const m = text.match(/\{[\s\S]*\}/);
-      parsed = m ? JSON.parse(m[0]) : { compras: [] };
-    }
-    const compras = normalize(parsed.compras || []);
-    return res.status(200).json({ fatura_vencimento: parsed.fatura_vencimento || null, compras });
-  } catch (e) {
-    return res.status(500).json({ error: String(e.message || e) });
   }
+  return res.status(502).json({ error: lastErr });
 }
 
 function normalize(list) {
