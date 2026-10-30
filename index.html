@@ -942,44 +942,70 @@ async function importFaturaPDF(dataUrl){
   }catch(err){alert('Não consegui ler a fatura: '+err.message);closeSheet();return;}
   const compras=(data.compras||[]).filter(c=>c.valor_parcela>0);
   if(!compras.length){alert('A IA não encontrou compras nesse PDF. Tente outra fatura.');closeSheet();return;}
-  faturaPreview(compras,data.fatura_vencimento);
+  faturaPreview(data);
 }
 
 function monthValue(iso){ const d=iso&&/^\d{4}-\d{2}/.test(iso)?new Date(iso):new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; }
+function normName(s){return String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,' ').trim();}
+function findCardByName(name){
+  const n=normName(name); if(!n)return null;
+  return S.cards.find(c=>{const cn=normName(c.name);return cn&&(cn===n||cn.includes(n)||n.includes(cn));})||null;
+}
 
-function faturaPreview(compras,vencimento){
+function faturaPreview(data){
+  const compras=(data.compras||[]).filter(c=>c.valor_parcela>0);
+  const vencimento=data.fatura_vencimento;
   const refMonth=monthValue(vencimento);
+  const emissor=(data.emissor||'').trim();
+  const final=String(data.cartao_final||'').replace(/\D/g,'').slice(-4);
+  const bandeira=(data.bandeira||'').trim();
+  const suggested = emissor ? (emissor + (final?` ••${final}`:'')) : 'Cartão de crédito';
+  const matched = findCardByName(suggested) || (emissor?findCardByName(emissor):null);
   const totalMes=compras.reduce((s,c)=>s+c.valor_parcela,0);
   const parceladas=compras.filter(c=>c.parcelas_total>1).length;
-  const rows=compras.map((c,i)=>`<div class="tx" style="padding:10px 2px">
+  const rows=compras.map((c)=>`<div class="tx" style="padding:10px 2px">
     <div class="mid"><div class="d">${esc(c.descricao)}${c.parcelas_total>1?`<span class="tag">${c.parcela_atual}/${c.parcelas_total}</span>`:''}</div>
       <div class="m">${c.data?new Intl.DateTimeFormat('pt-BR',{day:'2-digit',month:'short'}).format(parseD(c.data)).replace('.',''):'—'}${c.parcelas_total>1?' · total '+brl(c.valor_total):''}</div></div>
     <div class="amt num out">${brl(c.valor_parcela)}</div></div>`).join('');
-  const cardSel = S.cards.length
-    ? `<select id="fCard">${S.cards.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>`
-    : `<input id="fCard" value="Cartão de crédito" readonly>`;
+  const cardSel=`<select id="fCard">
+    <option value="new" ${matched?'':'selected'}>➕ Novo cartão: ${esc(suggested)}</option>
+    ${S.cards.map(c=>`<option value="${c.id}" ${matched&&matched.id===c.id?'selected':''}>${esc(c.name)}</option>`).join('')}
+  </select>`;
+  const detected = emissor ? `${esc(emissor)}${final?' ••'+final:''}${bandeira?' · '+esc(bandeira):''}` : 'não identificado';
   openSheet(`<h2>Fatura · ${compras.length} compras</h2>
+    <div class="callout" style="margin-bottom:14px;display:flex;align-items:center;gap:10px">
+      <span style="font-size:18px">💳</span>
+      <div>Cartão detectado: <b style="color:var(--ink)">${detected}</b>${matched?' <span class="tag">já cadastrado</span>':' <span class="tag">novo</span>'}</div>
+    </div>
     <div class="row2">
       <div class="field"><label>Mês de referência</label><input id="fRef" type="month" value="${refMonth}"></div>
-      <div class="field"><label>Cartão</label>${cardSel}</div>
+      <div class="field"><label>Lançar no cartão</label>${cardSel}</div>
     </div>
     <div class="subtotal"><div><div style="font-size:12px;color:var(--muted);font-weight:600">parcelas deste mês</div>
       <div style="font-size:12px;color:var(--muted);margin-top:4px">${parceladas} compra(s) parcelada(s)</div></div>
       <div class="v num" style="color:var(--neg)">${brl(totalMes)}</div></div>
-    <div style="max-height:34vh;overflow:auto;border:1px solid var(--line);border-radius:12px;padding:2px 12px;margin-bottom:8px">${rows}</div>
-    <p class="hint">Vou lançar a parcela deste mês como gasto normal e criar as parcelas futuras como <b>previsto</b> nos próximos meses, pra montar sua previsão. Revise antes de confirmar.</p>
+    <div style="max-height:32vh;overflow:auto;border:1px solid var(--line);border-radius:12px;padding:2px 12px;margin-bottom:8px">${rows}</div>
+    <p class="hint">A parcela deste mês vira gasto normal; as futuras viram <b>previsto</b>. Se o cartão for novo, ele é criado automaticamente. Os lançamentos aparecem todos juntos; a separação por cartão fica na aba Contas.</p>
     <div class="sheet-actions"><button class="btn ghost" id="fCancel">Cancelar</button><button class="btn" id="fImport">Importar</button></div>`);
   $('#fCancel').onclick=closeSheet;
-  $('#fImport').onclick=()=>applyFatura(compras);
+  $('#fImport').onclick=()=>applyFatura(compras,suggested,vencimento);
 }
 
-function applyFatura(compras){
+function resolveCard(sel,suggested,vencimento){
+  if(sel&&sel!=='new'){ const c=cardById(sel); if(c)return c.id; }
+  let card=findCardByName(suggested);
+  if(!card){
+    const dueDay = vencimento&&/^\d{4}-\d{2}-(\d{2})/.test(vencimento)?parseInt(vencimento.slice(8,10)):null;
+    card={id:uid(),name:suggested||'Cartão de crédito',limit:0,closingDay:1,dueDay,color:PALETTE[(S.cards.length+1)%PALETTE.length]};
+    S.cards.push(card);
+  }
+  return card.id;
+}
+
+function applyFatura(compras,suggested,vencimento){
   const refStr=$('#fRef').value||monthValue(null);
   const [ry,rm]=refStr.split('-').map(Number);
-  // cartão
-  let cardId;
-  if(S.cards.length){ cardId=$('#fCard').value; }
-  else { const nc={id:uid(),name:'Cartão de crédito',limit:0,closingDay:1,dueDay:null,color:PALETTE[1]}; S.cards.push(nc); cardId=nc.id; }
+  const cardId=resolveCard($('#fCard').value,suggested,vencimento);
   const outOther=S.categories.find(c=>c.kind==='expense'&&c.name==='Outros')?.id;
   const have=new Set(S.transactions.map(t=>t.extId).filter(Boolean));
   const slug=s=>String(s).toLowerCase().replace(/[^a-z0-9]+/g,'').slice(0,18);
@@ -993,7 +1019,7 @@ function applyFatura(compras){
       const d=new Date(ry, (rm-1)+off, Math.min(day,28));
       const date=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
       const previsto = off>0;
-      const extId=`fat:${slug(c.descricao)}:${total}:${Math.round(c.valor_parcela*100)}:${ry}-${rm}:${k}`;
+      const extId=`fat:${cardId}:${slug(c.descricao)}:${total}:${Math.round(c.valor_parcela*100)}:${ry}-${rm}:${k}`;
       if(have.has(extId))continue;
       S.transactions.push({id:uid(),extId,type:'expense',amount:c.valor_parcela,
         desc:c.descricao+(total>1?` (${k}/${total})`:''),categoryId:cat,date,
@@ -1002,7 +1028,8 @@ function applyFatura(compras){
     }
   });
   save();closeSheet();render();
-  alert(`${realN} lançamento(s) deste mês · ${prevN} parcela(s) futura(s) como previsto.`);
+  const cardName=cardById(cardId)?.name||'cartão';
+  alert(`Importado em "${cardName}": ${realN} lançamento(s) deste mês · ${prevN} parcela(s) futura(s).`);
 }
 function importStatement(text,name){
   let added=0; const acc=S.accounts[0]?.id;
