@@ -7,8 +7,15 @@ import { cors, authed } from "./_pluggy.js";
 // e cai para um modelo alternativo se o principal continuar indisponível.
 
 const PRIMARY = process.env.GEMINI_MODEL || "gemini-2.5-flash";
-const FALLBACKS = ["gemini-2.0-flash", "gemini-flash-latest"];
-const MODELS = [...new Set([PRIMARY, ...FALLBACKS])];
+// Cascata: tenta na ordem; se um estiver sobrecarregado, pula pro próximo na hora.
+// Os "lite" costumam ter mais capacidade livre nos picos.
+const CASCADE = [
+  "gemini-2.0-flash",
+  "gemini-2.5-flash-lite",
+  "gemini-2.0-flash-lite",
+  "gemini-flash-latest",
+];
+const MODELS = [...new Set([PRIMARY, ...CASCADE])];
 
 const PROMPT = `Você é um extrator de dados de faturas de cartão de crédito brasileiras.
 Analise o PDF da fatura e extraia TODAS as compras/lançamentos de despesa.
@@ -107,18 +114,20 @@ export default async function handler(req, res) {
   if (pdf.startsWith("data:") && comma !== -1) pdf = pdf.slice(comma + 1);
 
   const start = Date.now();
-  const DEADLINE = 45000; // para bem antes do limite de 60s da Vercel
+  const DEADLINE = 50000; // para antes do limite de 60s da Vercel
+  const PASSES = 4; // repete a cascata inteira até dar certo (dentro do tempo)
   let lastErr = "";
-  outer: for (const model of MODELS) {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      if (Date.now() - start > DEADLINE) break outer;
+  let triedModels = 0;
+  for (let pass = 0; pass < PASSES; pass++) {
+    for (const model of MODELS) {
+      if (Date.now() - start > DEADLINE) break;
+      triedModels++;
       let g;
       try {
         g = await callGemini(model, pdf, key);
       } catch (e) {
         lastErr = String(e.message || e);
-        await sleep(600);
-        continue;
+        continue; // falha de rede: próximo modelo na hora
       }
       if (g.ok) {
         const text =
@@ -137,22 +146,27 @@ export default async function handler(req, res) {
           cartao_final: parsed.cartao_final || null,
           bandeira: parsed.bandeira || null,
           compras,
+          modelo: model, // qual modelo da cascata respondeu
         });
       }
-      const msg = g.data?.error?.message || "";
-      lastErr = msg || "HTTP " + g.status;
-      if (isTransient(g.status, msg)) {
-        await sleep(700 * (attempt + 1)); // 0.7s, 1.4s
-        continue;
+      const status = g.status;
+      const msg = g.data?.error?.message || "HTTP " + status;
+      lastErr = msg;
+      // Credencial/permissão inválida: trocar de modelo não resolve -> aborta.
+      if (status === 401 || status === 403) {
+        return res.status(status).json({ error: msg });
       }
-      break; // erro não-transitório: tenta o próximo modelo
+      // Qualquer outra falha (sobrecarga, 404, 400, 429, 500...): CASCATA -> próximo modelo imediatamente.
     }
+    if (Date.now() - start > DEADLINE) break;
+    await sleep(800 * (pass + 1)); // respiro curto entre passadas completas
   }
-  const overloaded = /high demand|overloaded|unavailable|resource_exhausted|try again/i.test(lastErr);
+  const overloaded = /high demand|overloaded|unavailable|resource_exhausted|try again|429|503/i.test(lastErr);
   return res.status(503).json({
     error: overloaded
-      ? "A IA está muito ocupada agora. Tente novamente em alguns segundos."
+      ? "Todos os modelos de IA estão ocupados neste momento. Tente novamente em alguns segundos."
       : lastErr || "Não consegui processar a fatura. Tente novamente.",
+    modelos_tentados: triedModels,
   });
 }
 
