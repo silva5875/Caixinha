@@ -83,7 +83,8 @@ Regras importantes:
 - valor SEMPRE positivo e com ponto decimal. O sinal (entrada/saída) vai no campo "tipo".
 - IGNORE linhas de saldo (saldo anterior, saldo do dia, saldo disponível, saldo total) — não são movimentações.
 - Não invente lançamentos; extraia apenas o que está no extrato.
-- Se identificar o banco, coloque em "banco".`;
+- Se identificar o banco, coloque em "banco".
+- Marque "assinatura": true quando a SAÍDA for um serviço recorrente de assinatura (streaming e afins: Netflix, HBO Max, Max, Prime Video, Amazon Prime, Disney+, Star+, Globoplay, Paramount+, Apple TV, Spotify, Deezer, YouTube Premium, Apple, iCloud, Google One, academias, softwares/apps por assinatura). Em "servico", escreva o nome normalizado (ex.: "Netflix", "Spotify"). Para os demais lançamentos, "assinatura": false.`;
 
 const SCHEMA_EXTRATO = {
   type: "object",
@@ -98,6 +99,8 @@ const SCHEMA_EXTRATO = {
           data: { type: "string" },
           valor: { type: "number" },
           tipo: { type: "string" },
+          assinatura: { type: "boolean" },
+          servico: { type: "string" },
         },
         required: ["descricao", "valor", "tipo"],
       },
@@ -253,6 +256,8 @@ function normalizeExtrato(list) {
       data: /^\d{4}-\d{2}-\d{2}$/.test(m.data || "") ? m.data : null,
       valor: round2(Math.abs(num(m.valor))),
       tipo: String(m.tipo || "").toLowerCase().startsWith("entr") ? "entrada" : "saida",
+      assinatura: !!m.assinatura,
+      servico: String(m.servico || "").trim(),
     }))
     .filter((m) => m.valor > 0);
 }
