@@ -468,15 +468,28 @@ function render(){
 }
 
 /* ----- overview ----- */
+function carriedBalance(beforeDate){
+  // saldo em caixa acumulado: saldos iniciais + tudo que entrou − tudo que saiu antes da data
+  let b=S.accounts.reduce((a,ac)=>a+(ac.opening||0),0);
+  S.transactions.forEach(t=>{ if(parseD(t.date)<beforeDate){ b += t.type==='income'? t.amount : -t.amount; } });
+  return b;
+}
 function viewOverview(){
   const list=txInRange();
   const {inc,exp,net}=sums(list);
+  const {start}=range(ui.period,ui.ref);
+  const carryIn=carriedBalance(start);
+  const accumulated=carryIn+net;
   const recent=[...list].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,6);
   const hasData=list.length>0;
+  const periodWord={day:'hoje',week:'na semana',month:'no mês',year:'no ano'}[ui.period];
   return `
   <section class="card hero">
-    <div class="cap">Saldo do período</div>
-    <div class="bal num ${net>=0?'pos':'neg'}">${brl(net)}</div>
+    <div class="cap">Em caixa (acumulado)</div>
+    <div class="bal num ${accumulated>=0?'pos':'neg'}">${brl(accumulated)}</div>
+    <div style="font-size:12px;color:var(--muted);margin-top:5px">
+      ${brl(carryIn)} veio de antes · ${net>=0?'+':'−'} ${brl(Math.abs(net))} ${periodWord}
+    </div>
     <div class="flows">
       <div class="flow in"><div class="t"><span class="dot"></span>Entrou</div><div class="v num">${brl(inc)}</div></div>
       <div class="flow out"><div class="t"><span class="dot"></span>Saiu</div><div class="v num">${brl(exp)}</div></div>
@@ -917,7 +930,7 @@ function openMenu(){
       : `<button class="menu-item" id="mLogin"><span class="mi">☁</span><div>Entrar com Google<small>sincronizar seus dados na nuvem</small></div></button>`}
     <button class="menu-item" id="mExport"><span class="mi">↓</span><div>Fazer backup<small>baixa um arquivo .json com tudo</small></div></button>
     <button class="menu-item" id="mImportJson"><span class="mi">↑</span><div>Restaurar backup<small>carrega um .json salvo antes</small></div></button>
-    <button class="menu-item" id="mImportCsv"><span class="mi">≣</span><div>Importar extrato<small>arquivo CSV ou OFX do banco</small></div></button>
+    <button class="menu-item" id="mImportCsv"><span class="mi">≣</span><div>Importar extrato<small>PDF (a IA lê) · ou CSV/OFX</small></div></button>
     <button class="menu-item" id="mImportPdf"><span class="mi">✦</span><div>Importar fatura (PDF)<small>a IA lê as compras e parcelas</small></div></button>
     <button class="menu-item" id="mCats"><span class="mi">◍</span><div>Categorias<small>${S.categories.length} cadastradas</small></div></button>
     <button class="menu-item" id="mOF"><span class="mi">⇄</span><div>Open Finance<small>conectar bancos automaticamente</small></div></button>
@@ -1061,8 +1074,14 @@ let importMode='json';
 function pickFile(mode){importMode=mode;$('#fileIn').value='';$('#fileIn').click();}
 $('#fileIn').onchange=e=>{
   const f=e.target.files[0];if(!f)return;const rd=new FileReader();
+  const isPdf=/\.pdf$/i.test(f.name)||f.type==='application/pdf';
   if(importMode==='pdf'){
     rd.onload=()=>importFaturaPDF(rd.result);
+    rd.readAsDataURL(f);
+    return;
+  }
+  if(importMode==='csv'&&isPdf){ // extrato em PDF -> IA
+    rd.onload=()=>importExtratoPDF(rd.result);
     rd.readAsDataURL(f);
     return;
   }
@@ -1075,6 +1094,80 @@ $('#fileIn').onchange=e=>{
   };
   rd.readAsText(f);
 };
+
+/* ---------- import extrato bancário (PDF + IA) ---------- */
+function findAccountByName(name){
+  const n=normName(name); if(!n)return null;
+  return S.accounts.find(a=>{const an=normName(a.name);return an&&(an===n||an.includes(n)||n.includes(an));})||null;
+}
+async function importExtratoPDF(dataUrl){
+  const of=loadOF();
+  if(!of.backend){alert('Configure o servidor em Open Finance primeiro (URL + token).');return;}
+  const b64=(dataUrl.split(',')[1])||'';
+  openSheet('<div class="grip"></div><h2>Lendo o extrato…</h2><p class="hint">A IA está extraindo as movimentações. Isso leva alguns segundos.</p>');
+  let data;
+  try{
+    const r=await fetch(of.backend.replace(/\/+$/,'')+'/api/parse-fatura',{method:'POST',headers:ofHeaders(of),body:JSON.stringify({pdf:b64,tipo:'extrato'})});
+    const raw=await r.text();
+    try{data=JSON.parse(raw);}catch{data=null;}
+    if(!r.ok||!data){const msg=data?.error||(r.status>=500?'o servidor demorou ou a IA está ocupada. Tente de novo.':'resposta inesperada do servidor ('+r.status+')');throw new Error(msg);}
+  }catch(err){alert('Não consegui ler o extrato: '+err.message);closeSheet();return;}
+  const movs=(data.lancamentos||[]).filter(m=>m.valor>0);
+  if(!movs.length){alert('A IA não encontrou movimentações nesse PDF. Tente outro extrato.');closeSheet();return;}
+  extratoPreview(movs,data.banco);
+}
+function extratoPreview(movs,banco){
+  const entrada=movs.filter(m=>m.tipo==='entrada').reduce((s,m)=>s+m.valor,0);
+  const saida=movs.filter(m=>m.tipo==='saida').reduce((s,m)=>s+m.valor,0);
+  const bankName=(banco||'').trim();
+  const suggested=bankName||'Conta';
+  const matched=findAccountByName(suggested)||(bankName?findAccountByName(bankName):null);
+  const accSel=`<select id="eAcc">
+    <option value="new" ${matched?'':'selected'}>➕ Nova conta: ${esc(suggested)}</option>
+    ${S.accounts.map(a=>`<option value="${a.id}" ${matched&&matched.id===a.id?'selected':''}>${esc(a.name)}</option>`).join('')}
+  </select>`;
+  const rows=movs.map(m=>`<div class="tx" style="padding:9px 2px">
+    <div class="ic" style="background:${m.tipo==='entrada'?'var(--pos-soft)':'var(--neg-soft)'};color:${m.tipo==='entrada'?'var(--pos)':'var(--neg)'}">${m.tipo==='entrada'?'↑':'↓'}</div>
+    <div class="mid"><div class="d">${esc(m.descricao)}</div><div class="m">${m.data?new Intl.DateTimeFormat('pt-BR',{day:'2-digit',month:'short'}).format(parseD(m.data)).replace('.',''):'—'}</div></div>
+    <div class="amt num" style="color:${m.tipo==='entrada'?'var(--pos)':'var(--ink)'}">${m.tipo==='entrada'?'+':'−'} ${brl(m.valor)}</div></div>`).join('');
+  openSheet(`<h2>Extrato · ${movs.length} movimentações</h2>
+    ${bankName?`<div class="callout" style="margin-bottom:12px;display:flex;align-items:center;gap:10px"><span style="font-size:18px">🏦</span><div>Banco detectado: <b style="color:var(--ink)">${esc(bankName)}</b>${matched?' <span class="tag">já cadastrado</span>':' <span class="tag">novo</span>'}</div></div>`:''}
+    <div class="field"><label>Lançar na conta</label>${accSel}</div>
+    <div class="subtotal"><div><div style="font-size:12px;color:var(--muted);font-weight:600">resumo do extrato</div>
+      <div style="font-size:13px;margin-top:2px"><span style="color:var(--pos)">+${brl(entrada)}</span> &nbsp; <span style="color:var(--neg)">−${brl(saida)}</span></div></div>
+      <div class="v num" style="color:${entrada-saida>=0?'var(--pos)':'var(--neg)'}">${brl(entrada-saida)}</div></div>
+    <div style="max-height:34vh;overflow:auto;border:1px solid var(--line);border-radius:12px;padding:2px 12px;margin-bottom:8px">${rows}</div>
+    <p class="hint">Entradas (Pix recebido, salário…) vão para "Entrou"; saídas (débito, Pix enviado, boletos) para "Saiu" — cada uma na sua data. Reimportar o mesmo extrato não duplica.</p>
+    <div class="sheet-actions"><button class="btn ghost" id="eCancel">Cancelar</button><button class="btn" id="eImport">Importar</button></div>`);
+  $('#eCancel').onclick=closeSheet;
+  $('#eImport').onclick=()=>applyExtrato(movs,suggested);
+}
+function resolveAccount(sel,suggested){
+  if(sel&&sel!=='new'){const a=accById(sel);if(a)return a.id;}
+  let acc=findAccountByName(suggested);
+  if(!acc){acc={id:uid(),name:suggested||'Conta',type:'checking',opening:0,color:PALETTE[S.accounts.length%PALETTE.length]};S.accounts.push(acc);}
+  return acc.id;
+}
+function applyExtrato(movs,suggested){
+  const accId=resolveAccount($('#eAcc').value,suggested);
+  const outOther=S.categories.find(c=>c.kind==='expense'&&c.name==='Outros')?.id;
+  const inOther=S.categories.find(c=>c.kind==='income'&&c.name==='Outros')?.id;
+  const have=new Set(S.transactions.map(t=>t.extId).filter(Boolean));
+  const slug=s=>String(s).toLowerCase().replace(/[^a-z0-9]+/g,'').slice(0,22);
+  let n=0;
+  movs.forEach(m=>{
+    const date=m.data||todayStr();
+    const isIn=m.tipo==='entrada';
+    const extId=`ext:${accId}:${date}:${Math.round(m.valor*100)}:${isIn?'i':'o'}:${slug(m.descricao)}`;
+    if(have.has(extId))return;
+    const cat=isIn?inOther:(pluggyCat(m.descricao)||outOther);
+    S.transactions.push({id:uid(),extId,type:isIn?'income':'expense',amount:m.valor,desc:m.descricao,categoryId:cat,date,account:accId,card:null,subId:null});
+    have.add(extId);n++;
+  });
+  save();closeSheet();render();
+  const accName=accById(accId)?.name||'conta';
+  alert(`${n} movimentação(ões) importada(s) em "${accName}".`);
+}
 
 /* ---------- import fatura (PDF + IA) ---------- */
 async function importFaturaPDF(dataUrl){
