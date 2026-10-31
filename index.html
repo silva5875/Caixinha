@@ -240,7 +240,20 @@ input,select{font-family:inherit;font-size:16px}
 /* ---------- utils ---------- */
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const uid=()=> (crypto.randomUUID?crypto.randomUUID():Date.now()+''+Math.random().toString(16).slice(2));
-const brl=v=>new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(v||0);
+let hideVals=(()=>{try{return localStorage.getItem('caixa.hide')==='1';}catch(e){return false;}})();
+function toggleHide(){ hideVals=!hideVals; try{localStorage.setItem('caixa.hide',hideVals?'1':'0');}catch(e){} render(); }
+const brl=v=> hideVals ? 'R$ ••••' : new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(v||0);
+function svgIcon(name,size=16){
+  const a=`width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;display:inline-block"`;
+  const P={
+    eye:'<path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/>',
+    eyeOff:'<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20C5 20 1 12 1 12a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>',
+    card:'<rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/>',
+    bank:'<line x1="3" y1="22" x2="21" y2="22"/><line x1="6" y1="18" x2="6" y2="11"/><line x1="10" y1="18" x2="10" y2="11"/><line x1="14" y1="18" x2="14" y2="11"/><line x1="18" y1="18" x2="18" y2="11"/><polygon points="12 2 20 7 4 7"/>',
+    cloud:'<path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/>'
+  };
+  return `<svg ${a}>${P[name]||''}</svg>`;
+}
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const todayStr=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;};
 const parseD=s=>{const [y,m,d]=s.split('-').map(Number);return new Date(y,m-1,d);};
@@ -359,7 +372,7 @@ function sanitizeState(raw){
 const catById=id=>S.categories.find(c=>c.id===id);
 const accById=id=>S.accounts.find(a=>a.id===id);
 const cardById=id=>S.cards.find(c=>c.id===id);
-const catIcon=name=>({Mercado:'🛒',Alimentação:'🍽️',Transporte:'🚗',Moradia:'🏠',Contas:'🧾',Saúde:'🩺',Educação:'📚',Lazer:'🎉',Assinaturas:'↻',Compras:'🛍️',Salário:'💼',Freelance:'💻',Investimentos:'📈',Reembolso:'↩️'}[name]||'•');
+const catIcon=name=>String(name||'?').trim().charAt(0).toUpperCase()||'•';
 
 /* ---------- period ---------- */
 const sod=d=>{d=new Date(d);d.setHours(0,0,0,0);return d;};
@@ -485,7 +498,9 @@ function viewOverview(){
   const periodWord={day:'hoje',week:'na semana',month:'no mês',year:'no ano'}[ui.period];
   return `
   <section class="card hero">
-    <div class="cap">Em caixa (acumulado)</div>
+    <div class="cap" style="display:flex;align-items:center;gap:8px">Em caixa (acumulado)
+      <button data-hide aria-label="Mostrar ou ocultar valores" style="border:0;background:transparent;cursor:pointer;line-height:1;padding:2px 4px;opacity:.75;color:var(--muted)">${svgIcon(hideVals?'eyeOff':'eye',16)}</button>
+    </div>
     <div class="bal num ${accumulated>=0?'pos':'neg'}">${brl(accumulated)}</div>
     <div style="font-size:12px;color:var(--muted);margin-top:5px">
       ${brl(carryIn)} veio de antes · ${net>=0?'+':'−'} ${brl(Math.abs(net))} ${periodWord}
@@ -537,7 +552,7 @@ function drawOverviewCharts(){
       {label:'Saiu',data:outD,backgroundColor:cssv('--neg'),borderRadius:5,maxBarThickness:26}]},
       options:{responsive:true,maintainAspectRatio:false,
         plugins:{legend:{labels:{color:ink,boxWidth:10,boxHeight:10,usePointStyle:true,font:{family:'Inter',size:12}}},tooltip:{callbacks:{label:c=>c.dataset.label+': '+brl(c.raw)}}},
-        scales:{x:{grid:{display:false},ticks:{color:muted,font:{size:11}}},y:{grid:{color:line},ticks:{color:muted,font:{size:11},callback:v=>v>=1000?(v/1000)+'k':v}}}}});
+        scales:{x:{grid:{display:false},ticks:{color:muted,font:{size:11}}},y:{grid:{color:line},ticks:{color:muted,font:{size:11},callback:v=>hideVals?'':(v>=1000?(v/1000)+'k':v)}}}}});
   }
 }
 
@@ -575,7 +590,7 @@ function viewTx(){
     return `<section class="card" style="margin-bottom:10px;overflow:hidden">
       <div style="display:flex;align-items:center;gap:10px;padding:11px 14px;border-left:4px solid ${g.color};background:${g.color}14">
         <span style="width:10px;height:10px;border-radius:50%;background:${g.color};display:inline-block"></span>
-        <span style="font-weight:600;font-size:14px">${g.isCard?'💳 ':''}${esc(g.name)}</span>
+        <span style="font-weight:600;font-size:14px;display:flex;align-items:center;gap:6px">${g.isCard?svgIcon('card',14):''}${esc(g.name)}</span>
         <span style="margin-left:auto;font-weight:600;font-size:14px" class="num">${right}</span>
       </div>
       <div class="list" style="padding:0 14px">${g.items.map(txRow).join('')}</div>
@@ -713,7 +728,7 @@ function drawForecastChart(){
     options:{responsive:true,maintainAspectRatio:false,
       plugins:{legend:{labels:{color:ink,boxWidth:10,boxHeight:10,usePointStyle:true,font:{family:'Inter',size:12}}},tooltip:{callbacks:{label:c=>c.dataset.label+': '+brl(c.raw)}}},
       scales:{x:{stacked:true,grid:{display:false},ticks:{color:muted,font:{size:11}}},
-        y:{stacked:true,grid:{color:line},ticks:{color:muted,font:{size:11},callback:v=>v>=1000?(v/1000)+'k':v}}}}});
+        y:{stacked:true,grid:{color:line},ticks:{color:muted,font:{size:11},callback:v=>hideVals?'':(v>=1000?(v/1000)+'k':v)}}}}});
 }
 
 /* ----- empty states ----- */
@@ -730,6 +745,7 @@ function wireViewEvents(){
   $$('[data-carddetail]').forEach(el=>el.onclick=()=>openCardDetail(el.dataset.carddetail));
   $$('[data-goto]').forEach(el=>el.onclick=()=>{ui.view=el.dataset.goto;render();});
   $$('[data-filter]').forEach(el=>el.onclick=()=>{ui.txFilter=el.dataset.filter;render();});
+  $$('[data-hide]').forEach(el=>el.onclick=toggleHide);
   $$('[data-h]').forEach(el=>el.onclick=()=>{ui.horizon=parseInt(el.dataset.h);render();});
   $$('[data-fc]').forEach(el=>el.onclick=()=>{const k=el.dataset.fc;ui.fcOpen.has(k)?ui.fcOpen.delete(k):ui.fcOpen.add(k);render();});
   const g=$('#addSub');if(g)g.onclick=()=>openSub();
@@ -926,8 +942,8 @@ function openMenu(){
   openSheet(`
     <h2>Menu</h2>
     ${authUser
-      ? `<button class="menu-item" id="mLogout"><span class="mi">☁</span><div>Conectado${authUser.email?': '+esc(authUser.email):''}<small>dados sincronizados · toque para sair</small></div></button>`
-      : `<button class="menu-item" id="mLogin"><span class="mi">☁</span><div>Entrar com Google<small>sincronizar seus dados na nuvem</small></div></button>`}
+      ? `<button class="menu-item" id="mLogout"><span class="mi">${svgIcon('cloud',18)}</span><div>Conectado${authUser.email?': '+esc(authUser.email):''}<small>dados sincronizados · toque para sair</small></div></button>`
+      : `<button class="menu-item" id="mLogin"><span class="mi">${svgIcon('cloud',18)}</span><div>Entrar com Google<small>sincronizar seus dados na nuvem</small></div></button>`}
     <button class="menu-item" id="mExport"><span class="mi">↓</span><div>Fazer backup<small>baixa um arquivo .json com tudo</small></div></button>
     <button class="menu-item" id="mImportJson"><span class="mi">↑</span><div>Restaurar backup<small>carrega um .json salvo antes</small></div></button>
     <button class="menu-item" id="mImportCsv"><span class="mi">≣</span><div>Importar extrato<small>PDF (a IA lê) · ou CSV/OFX</small></div></button>
@@ -1123,7 +1139,7 @@ function extratoPreview(movs,banco){
   const suggested=bankName||'Conta';
   const matched=findAccountByName(suggested)||(bankName?findAccountByName(bankName):null);
   const accSel=`<select id="eAcc">
-    <option value="new" ${matched?'':'selected'}>➕ Nova conta: ${esc(suggested)}</option>
+    <option value="new" ${matched?'':'selected'}>+ Nova conta: ${esc(suggested)}</option>
     ${S.accounts.map(a=>`<option value="${a.id}" ${matched&&matched.id===a.id?'selected':''}>${esc(a.name)}</option>`).join('')}
   </select>`;
   const rows=movs.map(m=>`<div class="tx" style="padding:9px 2px">
@@ -1131,7 +1147,7 @@ function extratoPreview(movs,banco){
     <div class="mid"><div class="d">${esc(m.descricao)}</div><div class="m">${m.data?new Intl.DateTimeFormat('pt-BR',{day:'2-digit',month:'short'}).format(parseD(m.data)).replace('.',''):'—'}</div></div>
     <div class="amt num" style="color:${m.tipo==='entrada'?'var(--pos)':'var(--ink)'}">${m.tipo==='entrada'?'+':'−'} ${brl(m.valor)}</div></div>`).join('');
   openSheet(`<h2>Extrato · ${movs.length} movimentações</h2>
-    ${bankName?`<div class="callout" style="margin-bottom:12px;display:flex;align-items:center;gap:10px"><span style="font-size:18px">🏦</span><div>Banco detectado: <b style="color:var(--ink)">${esc(bankName)}</b>${matched?' <span class="tag">já cadastrado</span>':' <span class="tag">novo</span>'}</div></div>`:''}
+    ${bankName?`<div class="callout" style="margin-bottom:12px;display:flex;align-items:center;gap:10px">${svgIcon('bank',18)}<div>Banco detectado: <b style="color:var(--ink)">${esc(bankName)}</b>${matched?' <span class="tag">já cadastrado</span>':' <span class="tag">novo</span>'}</div></div>`:''}
     <div class="field"><label>Lançar na conta</label>${accSel}</div>
     <div class="subtotal"><div><div style="font-size:12px;color:var(--muted);font-weight:600">resumo do extrato</div>
       <div style="font-size:13px;margin-top:2px"><span style="color:var(--pos)">+${brl(entrada)}</span> &nbsp; <span style="color:var(--neg)">−${brl(saida)}</span></div></div>
@@ -1213,13 +1229,13 @@ function faturaPreview(data){
       <div class="m">${c.data?new Intl.DateTimeFormat('pt-BR',{day:'2-digit',month:'short'}).format(parseD(c.data)).replace('.',''):'—'}${c.parcelas_total>1?' · total '+brl(c.valor_total):''}</div></div>
     <div class="amt num out">${brl(c.valor_parcela)}</div></div>`).join('');
   const cardSel=`<select id="fCard">
-    <option value="new" ${matched?'':'selected'}>➕ Novo cartão: ${esc(suggested)}</option>
+    <option value="new" ${matched?'':'selected'}>+ Novo cartão: ${esc(suggested)}</option>
     ${S.cards.map(c=>`<option value="${c.id}" ${matched&&matched.id===c.id?'selected':''}>${esc(c.name)}</option>`).join('')}
   </select>`;
   const detected = emissor ? `${esc(emissor)}${final?' ••'+final:''}${bandeira?' · '+esc(bandeira):''}` : 'não identificado';
   openSheet(`<h2>Fatura · ${compras.length} compras</h2>
     <div class="callout" style="margin-bottom:14px;display:flex;align-items:center;gap:10px">
-      <span style="font-size:18px">💳</span>
+      ${svgIcon('card',18)}
       <div>Cartão detectado: <b style="color:var(--ink)">${detected}</b>${matched?' <span class="tag">já cadastrado</span>':' <span class="tag">novo</span>'}</div>
     </div>
     <div class="row2">
