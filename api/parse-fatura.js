@@ -71,13 +71,49 @@ const SCHEMA = {
   required: ["compras"],
 };
 
+const PROMPT_EXTRATO = `Você é um extrator de extratos bancários brasileiros.
+Analise o PDF do extrato e extraia TODAS as movimentações (lançamentos de dinheiro).
+Para cada movimentação retorne:
+- descricao: descrição do lançamento (ex.: "Pix recebido - João", "Compra no débito - Mercado", "Pagamento de boleto", "TED enviada", "Salário").
+- data: data no formato YYYY-MM-DD (se só houver dia/mês, use o ano do extrato).
+- valor: valor em número decimal com ponto, SEMPRE positivo (ex.: 150.75).
+- tipo: "entrada" se o dinheiro ENTROU na conta (Pix recebido, TED/DOC recebido, depósito, salário, rendimento, estorno, crédito); "saida" se o dinheiro SAIU (Pix enviado, compra no débito, saque, pagamento de conta/boleto, tarifa, débito automático, transferência enviada).
+
+Regras importantes:
+- valor SEMPRE positivo e com ponto decimal. O sinal (entrada/saída) vai no campo "tipo".
+- IGNORE linhas de saldo (saldo anterior, saldo do dia, saldo disponível, saldo total) — não são movimentações.
+- Não invente lançamentos; extraia apenas o que está no extrato.
+- Se identificar o banco, coloque em "banco".`;
+
+const SCHEMA_EXTRATO = {
+  type: "object",
+  properties: {
+    banco: { type: "string" },
+    lancamentos: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          descricao: { type: "string" },
+          data: { type: "string" },
+          valor: { type: "number" },
+          tipo: { type: "string" },
+        },
+        required: ["descricao", "valor", "tipo"],
+      },
+    },
+  },
+  required: ["lancamentos"],
+};
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const supportsThinking = (model) => !/2\.0/.test(model);
 
-function buildBody(pdf) {
+function buildBody(pdf, tipo) {
+  const isExtrato = tipo === "extrato";
   return {
-    contents: [{ parts: [{ inline_data: { mime_type: "application/pdf", data: pdf } }, { text: PROMPT }] }],
-    generationConfig: { responseMimeType: "application/json", responseSchema: SCHEMA },
+    contents: [{ parts: [{ inline_data: { mime_type: "application/pdf", data: pdf } }, { text: isExtrato ? PROMPT_EXTRATO : PROMPT }] }],
+    generationConfig: { responseMimeType: "application/json", responseSchema: isExtrato ? SCHEMA_EXTRATO : SCHEMA },
   };
 }
 
@@ -93,12 +129,12 @@ function isTransient(status, msg) {
   );
 }
 
-async function callGemini(model, pdf, key) {
+async function callGemini(model, pdf, key, tipo) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
   const r = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(buildBody(pdf, model)),
+    body: JSON.stringify(buildBody(pdf, tipo)),
   });
   const data = await r.json().catch(() => ({}));
   return { ok: r.ok, status: r.status, data };
@@ -117,6 +153,7 @@ export default async function handler(req, res) {
   if (!pdf) return res.status(400).json({ error: "envie o PDF em base64 no campo 'pdf'" });
   const comma = pdf.indexOf(",");
   if (pdf.startsWith("data:") && comma !== -1) pdf = pdf.slice(comma + 1);
+  const tipo = req.body?.tipo === "extrato" ? "extrato" : "fatura";
 
   const start = Date.now();
   const DEADLINE = 50000; // para antes do limite de 60s da Vercel
@@ -128,7 +165,7 @@ export default async function handler(req, res) {
       if (Date.now() - start > DEADLINE) break;
       let g;
       try {
-        g = await callGemini(model, pdf, key);
+        g = await callGemini(model, pdf, key, tipo);
       } catch (e) {
         lastErr = String(e.message || e);
         tried.push(model.replace("gemini-", "") + ":rede");
@@ -143,7 +180,14 @@ export default async function handler(req, res) {
           parsed = JSON.parse(text);
         } catch {
           const m = text.match(/\{[\s\S]*\}/);
-          parsed = m ? JSON.parse(m[0]) : { compras: [] };
+          parsed = m ? JSON.parse(m[0]) : {};
+        }
+        if (tipo === "extrato") {
+          return res.status(200).json({
+            banco: parsed.banco || null,
+            lancamentos: normalizeExtrato(parsed.lancamentos || []),
+            modelo: model,
+          });
         }
         const compras = normalize(parsed.compras || []);
         return res.status(200).json({
@@ -201,6 +245,16 @@ function normalize(list) {
       };
     })
     .filter((c) => c.valor_parcela > 0);
+}
+function normalizeExtrato(list) {
+  return (Array.isArray(list) ? list : [])
+    .map((m) => ({
+      descricao: String(m.descricao || "Lançamento").trim().slice(0, 200),
+      data: /^\d{4}-\d{2}-\d{2}$/.test(m.data || "") ? m.data : null,
+      valor: round2(Math.abs(num(m.valor))),
+      tipo: String(m.tipo || "").toLowerCase().startsWith("entr") ? "entrada" : "saida",
+    }))
+    .filter((m) => m.valor > 0);
 }
 function num(v) {
   if (typeof v === "number") return Number.isFinite(v) ? v : 0;
