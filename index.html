@@ -62,14 +62,15 @@ input,select{font-family:inherit;font-size:16px}
 .topactions{display:flex;gap:8px}
 
 /* period bar */
-.periodbar{display:flex;flex-direction:column;gap:10px;margin:4px 0 16px}
-.seg{display:flex;background:var(--surface-2);border-radius:12px;padding:3px;gap:2px}
+.periodbar{display:flex;flex-direction:column;gap:12px;margin:4px 0 16px}
+.seg{display:flex;background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:3px;gap:2px}
 .seg button{flex:1;border:0;background:transparent;color:var(--muted);padding:9px 0;border-radius:9px;font-size:13px;font-weight:600}
 .seg button.on{background:var(--surface);color:var(--ink);box-shadow:var(--shadow)}
-.navrow{display:flex;align-items:center;justify-content:space-between}
+.navrow{display:flex;align-items:center;justify-content:space-between;background:var(--surface);border:1px solid var(--line-strong);border-radius:12px;padding:6px 8px;box-shadow:var(--shadow)}
 .navrow .lbl{font-family:"Space Grotesk";font-weight:600;font-size:16px;text-transform:capitalize}
 .navrow .today{font-size:12px;color:var(--accent);background:transparent;border:0;font-weight:600;padding:6px 8px}
-.chev{width:34px;height:34px;border:1px solid var(--line);border-radius:9px;background:var(--surface);display:grid;place-items:center;font-size:16px}
+.chev{width:36px;height:36px;border:0;border-radius:9px;background:transparent;color:var(--muted);display:grid;place-items:center;font-size:18px}
+.chev:active{background:var(--surface-2)}
 
 /* cards */
 .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}
@@ -963,11 +964,52 @@ function openMenu(){
   $('#mWipe').onclick=()=>{ if(confirm('Apagar tudo? Faça um backup antes se quiser guardar.')){S=seedEmpty();save();closeSheet();render();} };
 }
 function openCats(){
+  const row=c=>`<div class="accrow" data-catedit="${c.id}" style="cursor:pointer"><div class="swatch" style="background:${c.color};width:34px;height:34px">${esc(catIcon(c.name))}</div><div class="mid"><div class="nm">${esc(c.name)}</div></div><div class="right" style="color:var(--muted);font-size:12px">editar ›</div></div>`;
+  const exp=S.categories.filter(c=>c.kind==='expense');
+  const inc=S.categories.filter(c=>c.kind==='income');
   openSheet(`<h2>Categorias</h2>
-    <div class="list">${S.categories.map(c=>`<div class="accrow"><div class="swatch" style="background:${c.color};width:30px;height:30px;border-radius:8px">${esc(catIcon(c.name))}</div><div class="mid"><div class="nm">${esc(c.name)}</div><div class="meta">${c.kind==='income'?'entrada':'saída'}</div></div></div>`).join('')}</div>
-    <p class="hint">As categorias padrão já cobrem a maioria dos casos. Edição completa de categorias entra numa próxima versão.</p>
-    <button class="btn block" id="cback" style="margin-top:12px">Voltar</button>`);
+    <div class="sec-h" style="margin:2px 2px 6px"><h2 style="font-size:13px;color:var(--muted)">Saídas</h2></div>
+    <section class="card" style="padding:2px 14px"><div class="list">${exp.map(row).join('')||emptyInline('Nenhuma')}</div></section>
+    <div class="sec-h" style="margin:14px 2px 6px"><h2 style="font-size:13px;color:var(--muted)">Entradas</h2></div>
+    <section class="card" style="padding:2px 14px"><div class="list">${inc.map(row).join('')||emptyInline('Nenhuma')}</div></section>
+    <button class="btn block" id="cnew" style="margin-top:14px">+ Nova categoria</button>
+    <button class="btn ghost block" id="cback" style="margin-top:10px">Voltar</button>`);
+  $$('[data-catedit]').forEach(el=>el.onclick=()=>openCatEdit(el.dataset.catedit));
+  $('#cnew').onclick=()=>openCatEdit();
   $('#cback').onclick=openMenu;
+}
+function openCatEdit(id){
+  const c=id?S.categories.find(x=>x.id===id):null;
+  const kind=c?c.kind:'expense';
+  openSheet(`<h2>${c?'Editar categoria':'Nova categoria'}</h2>
+    <div class="field"><label>Nome</label><input id="catName" placeholder="Ex.: Pets" value="${c?esc(c.name):''}"></div>
+    <div class="typetog">
+      <button type="button" id="ctExp" class="${kind==='expense'?'on-out':''}">Saída</button>
+      <button type="button" id="ctInc" class="${kind==='income'?'on-in':''}">Entrada</button>
+    </div>
+    <div class="field"><label>Cor</label><div class="swatchpick" id="catColors"></div></div>
+    <div class="sheet-actions"><button class="btn ghost" id="catCancel">Cancelar</button><button class="btn" id="catSave">${c?'Salvar':'Adicionar'}</button></div>
+    ${c?'<button class="del" id="catDel">Excluir categoria</button>':''}`);
+  let curKind=kind, color=c?c.color:PALETTE[S.categories.length%PALETTE.length];
+  const setKind=k=>{curKind=k;$('#ctExp').className=k==='expense'?'on-out':'';$('#ctInc').className=k==='income'?'on-in':'';};
+  $('#ctExp').onclick=()=>setKind('expense');$('#ctInc').onclick=()=>setKind('income');
+  $('#catColors').innerHTML=PALETTE.map(x=>`<button type="button" data-c="${x}" class="${x===color?'on':''}" style="background:${x}"></button>`).join('');
+  $$('#catColors button').forEach(b=>b.onclick=()=>{color=b.dataset.c;$$('#catColors button').forEach(y=>y.classList.toggle('on',y.dataset.c===color));});
+  $('#catCancel').onclick=openCats;
+  $('#catSave').onclick=()=>{
+    const name=$('#catName').value.trim(); if(!name){$('#catName').focus();return;}
+    if(c){ c.name=name; c.kind=curKind; c.color=color; }
+    else { S.categories.push({id:uid(),name,kind:curKind,color}); }
+    save(); openCats();
+  };
+  if(c)$('#catDel').onclick=()=>{
+    if(!confirm('Excluir esta categoria? Os lançamentos dela passam para "Outros".'))return;
+    const fb=S.categories.find(x=>x.kind===c.kind&&x.name==='Outros'&&x.id!==c.id);
+    S.transactions.forEach(t=>{ if(t.categoryId===c.id)t.categoryId=fb?fb.id:null; });
+    S.subscriptions.forEach(s=>{ if(s.categoryId===c.id)s.categoryId=fb?fb.id:null; });
+    S.categories=S.categories.filter(x=>x.id!==c.id);
+    save(); openCats();
+  };
 }
 function openOpenFinance(){
   const of=loadOF();
@@ -1170,19 +1212,28 @@ function applyExtrato(movs,suggested){
   const inOther=S.categories.find(c=>c.kind==='income'&&c.name==='Outros')?.id;
   const have=new Set(S.transactions.map(t=>t.extId).filter(Boolean));
   const slug=s=>String(s).toLowerCase().replace(/[^a-z0-9]+/g,'').slice(0,22);
-  let n=0;
+  const assinCat=S.categories.find(c=>c.kind==='expense'&&c.name==='Assinaturas')?.id;
+  let n=0, subN=0;
   movs.forEach(m=>{
     const date=m.data||todayStr();
     const isIn=m.tipo==='entrada';
+    let subId=null;
+    if(!isIn && m.assinatura){
+      const d=parseD(date);
+      const r=ensureSubscription((m.servico||m.descricao||'Assinatura').trim(), m.valor, d.getFullYear(), d.getMonth()+1);
+      subId=r.id; if(r.created)subN++;
+    }
     const extId=`ext:${accId}:${date}:${Math.round(m.valor*100)}:${isIn?'i':'o'}:${slug(m.descricao)}`;
     if(have.has(extId))return;
-    const cat=isIn?inOther:(pluggyCat(m.descricao)||outOther);
-    S.transactions.push({id:uid(),extId,type:isIn?'income':'expense',amount:m.valor,desc:m.descricao,categoryId:cat,date,account:accId,card:null,subId:null});
+    const cat=isIn?inOther:(m.assinatura?(assinCat||outOther):(pluggyCat(m.descricao)||outOther));
+    S.transactions.push({id:uid(),extId,type:isIn?'income':'expense',amount:m.valor,desc:m.descricao,categoryId:cat,date,account:accId,card:null,subId});
     have.add(extId);n++;
   });
   save();closeSheet();render();
   const accName=accById(accId)?.name||'conta';
-  alert(`${n} movimentação(ões) importada(s) em "${accName}".`);
+  let msg=`${n} movimentação(ões) importada(s) em "${accName}".`;
+  if(subN)msg+=`\n${subN} assinatura(s) detectada(s) e adicionada(s) na aba Assinaturas.`;
+  alert(msg);
 }
 
 /* ---------- import fatura (PDF + IA) ---------- */
