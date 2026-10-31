@@ -636,7 +636,7 @@ function viewSubs(){
 function viewAccounts(){
   const accRows=S.accounts.map(a=>{
     const b=accountBalance(a);const t={checking:'Conta',wallet:'Carteira',savings:'Poupança',cash:'Dinheiro'}[a.type]||'Conta';
-    return `<div class="accrow" data-accedit="${a.id}">
+    return `<div class="accrow" data-accdetail="${a.id}" style="cursor:pointer">
       <div class="swatch" style="background:${a.color}">${esc((a.name||'?')[0].toUpperCase())}</div>
       <div class="mid"><div class="nm">${esc(a.name)}</div><div class="meta">${t}</div></div>
       <div class="right"><div class="v num" style="color:${b>=0?'var(--ink)':'var(--neg)'}">${brl(b)}</div></div>
@@ -742,6 +742,7 @@ function wireViewEvents(){
   $$('[data-edit]').forEach(el=>el.onclick=()=>openTx(el.dataset.edit));
   $$('[data-subedit]').forEach(el=>el.onclick=()=>openSub(el.dataset.subedit));
   $$('[data-accedit]').forEach(el=>el.onclick=()=>openAcc(el.dataset.accedit));
+  $$('[data-accdetail]').forEach(el=>el.onclick=()=>openAccountDetail(el.dataset.accdetail));
   $$('[data-cardedit]').forEach(el=>el.onclick=()=>openCard(el.dataset.cardedit));
   $$('[data-carddetail]').forEach(el=>el.onclick=()=>openCardDetail(el.dataset.carddetail));
   $$('[data-goto]').forEach(el=>el.onclick=()=>{ui.view=el.dataset.goto;render();});
@@ -874,6 +875,38 @@ function openAcc(id){
 }
 
 /* card */
+function openAccountDetail(id){
+  const a=accById(id);if(!a)return;
+  const tx=S.transactions.filter(t=>t.account===a.id);
+  const inc=tx.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0);
+  const exp=tx.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0);
+  const bal=accountBalance(a);
+  const {start,end}=range('month',new Date());
+  let mi=0,me=0; tx.forEach(t=>{const d=parseD(t.date);if(d>=start&&d<=end){t.type==='income'?mi+=t.amount:me+=t.amount;}});
+  const tname={checking:'Conta corrente',savings:'Poupança',wallet:'Carteira digital',cash:'Dinheiro'}[a.type]||'Conta';
+  const health=inc-exp;
+  openSheet(`
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+      <div class="swatch" style="background:${a.color}">${esc((a.name||'?')[0].toUpperCase())}</div>
+      <div><h2 style="margin:0;font-size:18px">${esc(a.name)}</h2><div class="hint" style="margin:0">${tname}</div></div>
+    </div>
+    <section class="card hero" style="padding:18px;margin-bottom:12px">
+      <div class="cap">Saldo atual</div>
+      <div class="bal num ${bal>=0?'pos':'neg'}">${brl(bal)}</div>
+      <div class="flows">
+        <div class="flow in"><div class="t"><span class="dot"></span>Entrou (total)</div><div class="v num">${brl(inc)}</div></div>
+        <div class="flow out"><div class="t"><span class="dot"></span>Saiu (total)</div><div class="v num">${brl(exp)}</div></div>
+      </div>
+    </section>
+    <div class="subtotal"><div><div style="font-size:12px;color:var(--muted);font-weight:600">neste mês</div>
+      <div style="font-size:13px;margin-top:2px"><span style="color:var(--pos)">+${brl(mi)}</span> &nbsp; <span style="color:var(--neg)">−${brl(me)}</span></div></div>
+      <div class="v num" style="color:${mi-me>=0?'var(--pos)':'var(--neg)'}">${brl(mi-me)}</div></div>
+    <p class="hint">${health>=0?'Saúde da conta: no total, as entradas superam as saídas.':'Saúde da conta: no total, as saídas superam as entradas.'}</p>
+    <div class="sheet-actions" style="margin-top:14px"><button class="btn ghost" id="adEdit">Editar conta</button><button class="btn" id="adClose">Fechar</button></div>
+  `);
+  $('#adEdit').onclick=()=>openAcc(id);
+  $('#adClose').onclick=closeSheet;
+}
 function openCardDetail(id){
   const c=cardById(id);if(!c)return;
   const {start,end}=invoiceCycle(c);
