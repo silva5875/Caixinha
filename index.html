@@ -665,13 +665,14 @@ function materializeFixos(){
 }
 
 /* verifica se já existe um lançamento equivalente (valor + data próxima + nome parecido) */
-function isDuplicate(amount,dateStr,desc,type,list){
+function isDuplicate(amount,dateStr,desc,type,list,src){
   const d0=parseD(dateStr||todayStr()).getTime();
   const nd=normName(desc);
   const cents=Math.round((amount||0)*100);
   return (list||S.transactions).some(t=>{
     if(t.previsto)return false;
     if(t.type!==type)return false;
+    if(src){ const ts=t.card?'card':'account'; if(ts!==src)return false; }
     if(Math.round(t.amount*100)!==cents)return false;
     const dd=Math.abs(parseD(t.date).getTime()-d0)/86400000;
     if(dd>3)return false;
@@ -927,7 +928,16 @@ function openTx(id){
     const rec={id:t?t.id:uid(),type:curType,amount:Math.abs(amt),desc:$('#fDesc').value.trim(),
       categoryId:$('#fCat').value,date:$('#fDate').value,
       account:isCard?null:srcRaw,card:isCard?srcRaw.slice(5):null, subId:t?t.subId:null};
-    if(t)Object.assign(t,rec);else S.transactions.push(rec);
+    if(t){ Object.assign(t,rec); }
+    else {
+      const src=isCard?'card':'account';
+      if(isDuplicate(rec.amount,rec.date,rec.desc,rec.type,S.transactions,src)){
+        const metodo=isCard?'crédito':'conta (débito/Pix)';
+        const ok=confirm(`Já existe um lançamento igual no sistema:\n\n${rec.desc||'(sem nome)'} · ${brl(rec.amount)} · ${new Intl.DateTimeFormat('pt-BR').format(parseD(rec.date))} · ${metodo}\n\nDeseja adicionar mesmo assim?`);
+        if(!ok)return;
+      }
+      S.transactions.push(rec);
+    }
     save();closeSheet();render();
   };
   if(t)$('#delTx').onclick=()=>{S.transactions=S.transactions.filter(x=>x.id!==t.id);save();closeSheet();render();};
@@ -1343,7 +1353,7 @@ function extratoPreview(movs,banco){
     <option value="new" ${matched?'':'selected'}>+ Nova conta: ${esc(suggested)}</option>
     ${S.accounts.map(a=>`<option value="${a.id}" ${matched&&matched.id===a.id?'selected':''}>${esc(a.name)}</option>`).join('')}
   </select>`;
-  const isDup=m=>isDuplicate(m.valor,m.data,m.descricao,m.tipo==='entrada'?'income':'expense');
+  const isDup=m=>isDuplicate(m.valor,m.data,m.descricao,m.tipo==='entrada'?'income':'expense',null,'account');
   const dupCount=movs.filter(isDup).length;
   const rows=movs.map(m=>{const dup=isDup(m);return `<div class="tx" style="padding:9px 2px${dup?';opacity:.45':''}">
     <div class="ic" style="background:${m.tipo==='entrada'?'var(--pos-soft)':'var(--neg-soft)'};color:${m.tipo==='entrada'?'var(--pos)':'var(--neg)'}">${m.tipo==='entrada'?'↑':'↓'}</div>
@@ -1380,7 +1390,7 @@ function applyExtrato(movs,suggested){
     const date=m.data||todayStr();
     const isIn=m.tipo==='entrada';
     const type=isIn?'income':'expense';
-    if(isDuplicate(m.valor,date,m.descricao,type,existing)){dupN++;return;}
+    if(isDuplicate(m.valor,date,m.descricao,type,existing,'account')){dupN++;return;}
     let subId=null;
     if(!isIn && m.assinatura){
       const d=parseD(date);
@@ -1514,7 +1524,7 @@ function applyFatura(compras,suggested,vencimento){
       const previsto = off>0;
       const extId=`fat:${cardId}:${slug(c.descricao)}:${total}:${Math.round(c.valor_parcela*100)}:${ry}-${rm}:${k}`;
       if(have.has(extId))continue;
-      if(!previsto && isDuplicate(c.valor_parcela,date,c.descricao,'expense',existing)){dupN++;continue;}
+      if(!previsto && isDuplicate(c.valor_parcela,date,c.descricao,'expense',existing,'card')){dupN++;continue;}
       S.transactions.push({id:uid(),extId,type:'expense',amount:c.valor_parcela,
         desc:c.descricao+(total>1?` (${k}/${total})`:''),categoryId:cat,date,
         account:null,card:cardId,subId,previsto});
