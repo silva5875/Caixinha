@@ -337,6 +337,7 @@ function seedEmpty(){
     transactions:[],
     subscriptions:[],
     fixos:[],
+    renda:[],
     budgets:{},
     goals:[],
     spendGoal:0,
@@ -386,6 +387,7 @@ function sanitizeState(raw){
     if(t.fixo)o.fixo=true;
     if(t.paid)o.paid=true;
     if(t.faturaOf)o.faturaOf=_str(t.faturaOf,64);
+    if(t.transfer)o.transfer=true;
     return o;
   }).filter(t=>t.amount>0);
   out.subscriptions=(Array.isArray(raw.subscriptions)?raw.subscriptions:[]).slice(0,1000).map(s=>({
@@ -411,9 +413,14 @@ function sanitizeState(raw){
   out.spendGoal=Math.max(0,_num(raw.spendGoal));
   const cof=raw.cofrinho&&typeof raw.cofrinho==='object'?raw.cofrinho:{};
   out.cofrinho={
-    deposits:(Array.isArray(cof.deposits)?cof.deposits:[]).slice(0,2000).map(d=>({id:_str(d.id,64)||uid(),date:_date(d.date),amount:Math.abs(_num(d.amount))})).filter(d=>d.amount>0),
+    deposits:(Array.isArray(cof.deposits)?cof.deposits:[]).slice(0,4000).map(d=>({id:_str(d.id,64)||uid(),date:_date(d.date),amount:_num(d.amount)})).filter(d=>d.amount!==0),
     metaMes:Math.max(0,_num(cof.metaMes)),metaSemestre:Math.max(0,_num(cof.metaSemestre)),metaAno:Math.max(0,_num(cof.metaAno))
   };
+  out.renda=(Array.isArray(raw.renda)?raw.renda:[]).slice(0,200).map(f=>({
+    id:_str(f.id,64)||uid(),name:_str(f.name,80)||'Receita',amount:Math.abs(_num(f.amount)),
+    day:_day(f.day,5),account:accIds.has(f.account)?f.account:null,
+    active:f.active!==false,since:/^\d{4}-\d{2}$/.test(f.since||'')?f.since:null
+  }));
   return out;
 }
 const catById=id=>S.categories.find(c=>c.id===id);
@@ -537,7 +544,7 @@ function carriedBalance(beforeDate){
 function viewOverview(){
   const list=txInRange();
   // visão de GASTOS: compras (cartão + conta); exclui pagamentos de fatura (quitação de dívida, não é gasto novo)
-  const spendList=list.filter(t=>!(t.type==='expense'&&t.faturaOf));
+  const spendList=list.filter(t=>!t.transfer&&!(t.type==='expense'&&t.faturaOf));
   const {inc,exp}=sums(spendList);
   const {start}=range(ui.period,ui.ref);
   // dinheiro em CAIXA: só movimentos de conta (inclui pagamento de fatura; exclui compras no cartão)
@@ -550,7 +557,7 @@ function viewOverview(){
   const periodWord={day:'hoje',week:'na semana',month:'no mês',year:'no ano'}[ui.period];
   // comparativo com o período anterior
   const prevR=range(ui.period,shift(ui.period,ui.ref,-1));
-  let prevExp=0; S.transactions.forEach(t=>{if(t.type==='expense'&&!t.faturaOf){const d=parseD(t.date);if(d>=prevR.start&&d<=prevR.end)prevExp+=t.amount;}});
+  let prevExp=0; S.transactions.forEach(t=>{if(t.type==='expense'&&!t.faturaOf&&!t.transfer){const d=parseD(t.date);if(d>=prevR.start&&d<=prevR.end)prevExp+=t.amount;}});
   const dExp=prevExp>0?(exp-prevExp)/prevExp*100:null;
   const cmp=(prevExp>0||exp>0)?`
   <section class="card" style="padding:14px 16px;margin-bottom:14px">
@@ -584,7 +591,7 @@ function viewOverview(){
   let spendGoalHtml='';
   if(ui.period==='month'&&S.spendGoal>0){
     const pv=range('month',shift('month',ui.ref,-1)); let prevTot=0;
-    S.transactions.forEach(t=>{if(t.type==='expense'&&!t.faturaOf){const d=parseD(t.date);if(d>=pv.start&&d<=pv.end)prevTot+=t.amount;}});
+    S.transactions.forEach(t=>{if(t.type==='expense'&&!t.faturaOf&&!t.transfer){const d=parseD(t.date);if(d>=pv.start&&d<=pv.end)prevTot+=t.amount;}});
     const meta=S.spendGoal, pct=Math.min(exp/meta*100,100), over=exp>meta, near=!over&&exp>=meta*0.85;
     const col=over?'var(--neg)':(near?'#D99A2B':'var(--accent)'); const diff=meta-prevTot;
     spendGoalHtml=`<div class="sec-h"><h2>Meta de gastos do mês</h2><button class="link" data-openbud>editar</button></div>
@@ -663,7 +670,7 @@ function viewOverview(){
   `;
 }
 function drawOverviewCharts(){
-  const list=txInRange().filter(t=>!(t.type==='expense'&&t.faturaOf));
+  const list=txInRange().filter(t=>!t.transfer&&!(t.type==='expense'&&t.faturaOf));
   const cats=byCategory(list,'expense');
   const dc=$('#donut');
   if(dc&&cats.length){
@@ -677,7 +684,7 @@ function drawOverviewCharts(){
   if(bc){
     const bk=buckets(ui.period,ui.ref);
     const inD=[],outD=[];
-    bk.forEach(b=>{let i=0,o=0;S.transactions.forEach(t=>{if(t.type==='expense'&&t.faturaOf)return;const d=parseD(t.date);if(d>=b.start&&d<=b.end){t.type==='income'?i+=t.amount:o+=t.amount;}});inD.push(i);outD.push(o);});
+    bk.forEach(b=>{let i=0,o=0;S.transactions.forEach(t=>{if(t.transfer||(t.type==='expense'&&t.faturaOf))return;const d=parseD(t.date);if(d>=b.start&&d<=b.end){t.type==='income'?i+=t.amount:o+=t.amount;}});inD.push(i);outD.push(o);});
     const ink=cssv('--ink'),muted=cssv('--muted'),line=cssv('--line');
     charts.bars=new Chart(bc,{type:'bar',data:{labels:bk.map(b=>b.label),datasets:[
       {label:'Entrou',data:inD,backgroundColor:cssv('--pos'),borderRadius:5,maxBarThickness:26},
@@ -696,7 +703,7 @@ function txRow(t){
   const d=new Intl.DateTimeFormat('pt-BR',{day:'2-digit',month:'short'}).format(parseD(t.date)).replace('.','');
   return `<div class="tx" data-edit="${t.id}" style="${t.previsto?'opacity:.62':''}">
     <div class="ic" style="background:${col}22;color:${col}">${t.previsto?'⟳':(t.type==='income'?'↑':esc(catIcon(c?.name)))}</div>
-    <div class="mid"><div class="d">${esc(t.desc||(c?c.name:'Lançamento'))}${t.subId?'<span class="tag">assinatura</span>':''}${t.previsto?'<span class="tag">previsto</span>':''}</div>
+    <div class="mid"><div class="d">${esc(t.desc||(c?c.name:'Lançamento'))}${t.subId?'<span class="tag">assinatura</span>':''}${t.previsto?'<span class="tag">previsto</span>':''}${t.transfer?'<span class="tag">transferência</span>':''}${t.faturaOf?'<span class="tag">pagto fatura</span>':''}</div>
       <div class="m">${d} · ${esc(c?c.name:'—')} · ${esc(src||'—')}</div></div>
     <div class="amt num ${t.type==='income'?'in':'out'}">${t.type==='income'?'+':'−'} ${brl(t.amount)}</div>
   </div>`;
@@ -708,7 +715,7 @@ function viewTx(){
   if(ui.txCat&&ui.txCat!=='all')list=list.filter(t=>t.categoryId===ui.txCat);
   const q=normName(ui.txSearch);
   if(q)list=list.filter(t=>normName(t.desc).includes(q)||normName((catById(t.categoryId)||{}).name).includes(q));
-  const {inc,exp}=sums(list);
+  const {inc,exp}=sums(list.filter(t=>!t.transfer&&!(t.type==='expense'&&t.faturaOf)));
   // agrupa por origem (cartão / conta)
   const groups=new Map();
   list.forEach(t=>{
@@ -776,6 +783,34 @@ function materializeFixos(){
   return added>0;
 }
 
+/* materializa as receitas recorrentes como entrada em conta de cada mês */
+function materializeRenda(){
+  if(!S.renda||!S.renda.length)return false;
+  const have=new Set(S.transactions.map(t=>t.extId).filter(Boolean));
+  const now=new Date(), curY=now.getFullYear(), curM=now.getMonth();
+  let added=0;
+  S.renda.forEach(f=>{
+    if(f.active===false)return;
+    const acc=f.account||(S.accounts[0]&&S.accounts[0].id); if(!acc)return;
+    const [sy,sm]=(f.since||ym(now)).split('-').map(Number);
+    let y=sy, m=(sm||1)-1;
+    while(y<curY || (y===curY && m<=curM)){
+      const key=`renda:${f.id}:${y}-${String(m+1).padStart(2,'0')}`;
+      if(!have.has(key)){
+        const day=Math.min(Math.max(f.day||1,1),28);
+        const date=`${y}-${String(m+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+        const cat=S.categories.find(c=>c.kind==='income'&&c.name==='Salário')?.id||S.categories.find(c=>c.kind==='income'&&c.name==='Outros')?.id||null;
+        S.transactions.push({id:uid(),extId:key,type:'income',amount:f.amount,desc:f.name,categoryId:cat,date,account:acc,card:null,subId:null,fixo:true});
+        have.add(key); added++;
+      }
+      m++; if(m>11){m=0;y++;}
+    }
+  });
+  if(added)save();
+  return added>0;
+}
+function rendaMensal(){ return (S.renda||[]).filter(f=>f.active!==false).reduce((a,f)=>a+f.amount,0); }
+
 /* verifica se já existe um lançamento equivalente (valor + data próxima + nome parecido) */
 function isDuplicate(amount,dateStr,desc,type,list,src){
   const d0=parseD(dateStr||todayStr()).getTime();
@@ -796,6 +831,29 @@ function isDuplicate(amount,dateStr,desc,type,list,src){
   });
 }
 
+function openRenda(id){
+  const f=id?S.renda.find(x=>x.id===id):null;
+  openSheet(`<h2>${f?'Editar receita fixa':'Nova receita fixa'}</h2>
+    <div class="field"><label>Nome</label><input id="rdName" placeholder="Ex.: Salário" value="${f?esc(f.name):''}"></div>
+    <div class="row2">
+      <div class="field"><label>Valor</label><input id="rdAmt" type="number" step="0.01" inputmode="decimal" placeholder="0,00" value="${f?f.amount:''}"></div>
+      <div class="field"><label>Dia do mês</label><input id="rdDay" type="number" min="1" max="28" value="${f?f.day:5}"></div>
+    </div>
+    <div class="field"><label>Cai na conta</label><select id="rdAcc">${accOptions(f?.account)}</select></div>
+    <div class="field"><label>Situação</label><select id="rdActive"><option value="1" ${f?.active!==false?'selected':''}>Ativa</option><option value="0" ${f?.active===false?'selected':''}>Pausada</option></select></div>
+    <div class="sheet-actions"><button class="btn ghost" id="rdCancel">Cancelar</button><button class="btn" id="rdSave">${f?'Salvar':'Adicionar'}</button></div>
+    ${f?'<button class="del" id="rdDel">Excluir receita fixa</button>':''}
+    <p class="hint">Receitas fixas entram automaticamente como entrada na conta todo mês, no dia escolhido.</p>`);
+  $('#rdCancel').onclick=closeSheet;
+  $('#rdSave').onclick=()=>{
+    const name=$('#rdName').value.trim(); const amt=parseFloat($('#rdAmt').value);
+    if(!name||!amt){$('#rdName').focus();return;}
+    const rec={id:f?f.id:uid(),name,amount:Math.abs(amt),day:parseInt($('#rdDay').value)||1,account:$('#rdAcc').value,active:$('#rdActive').value==='1',since:f?f.since:ym(new Date())};
+    if(f)Object.assign(f,rec); else S.renda.push(rec);
+    save(); materializeRenda(); closeSheet(); render();
+  };
+  if(f)$('#rdDel').onclick=()=>{ if(!confirm('Excluir esta receita fixa? As entradas já geradas permanecem.'))return; S.renda=S.renda.filter(x=>x.id!==f.id); save(); closeSheet(); render(); };
+}
 function openFixo(id){
   const f=id?S.fixos.find(x=>x.id===id):null;
   openSheet(`<h2>${f?'Editar gasto fixo':'Novo gasto fixo'}</h2>
@@ -848,12 +906,25 @@ function viewSubs(){
         <div class="meta">${brl(s.amount)} · ${freq}</div></div>
       <div class="right"><div class="v num">${brl(monthlyCost(s))}</div><div style="font-size:11px;color:var(--muted)">/mês</div></div>
     </div>`;};
+  const renda=S.renda||[];
+  const rendaTot=rendaMensal();
+  const rendaRow=f=>`<div class="accrow" data-rendaedit="${f.id}" style="cursor:pointer">
+      <div class="swatch" style="background:var(--pos)">${esc((f.name||'?')[0].toUpperCase())}</div>
+      <div class="mid"><div class="nm">${esc(f.name)}${f.active===false?' <span class="tag">pausada</span>':''}</div>
+        <div class="meta">todo dia ${f.day||1}${f.account?' · '+esc((accById(f.account)||{}).name||''):''}</div></div>
+      <div class="right"><div class="v num" style="color:var(--pos)">${brl(f.amount)}</div><div style="font-size:11px;color:var(--muted)">/mês</div></div>
+    </div>`;
+  const rendaRows=renda.length?[...renda].sort((a,b)=>b.amount-a.amount).map(rendaRow).join(''):emptyInline('Nenhuma receita fixa');
   const fixoRows=fixos.length?[...fixos].sort((a,b)=>b.amount-a.amount).map(fixoRow).join(''):emptyInline('Nenhum gasto fixo');
   const subRows=S.subscriptions.length?[...S.subscriptions].sort((a,b)=>monthlyCost(b)-monthlyCost(a)).map(subRow).join(''):emptyInline('Nenhuma assinatura');
   return `
-  <div class="subtotal"><div><div style="font-size:12px;color:var(--muted);font-weight:600">comprometido por mês</div>
-    <div style="font-size:12px;color:var(--muted);margin-top:4px">${brl(total*12)} por ano</div></div>
-    <div class="v num" style="color:var(--neg)">${brl(total)}</div></div>
+  <div class="subtotal"><div><div style="font-size:12px;color:var(--muted);font-weight:600">por mês</div>
+    <div style="font-size:12px;margin-top:4px"><span style="color:var(--pos)">+${brl(rendaTot)}</span> &nbsp; <span style="color:var(--neg)">−${brl(total)}</span></div></div>
+    <div class="v num" style="color:${rendaTot-total>=0?'var(--pos)':'var(--neg)'}">${brl(rendaTot-total)}</div></div>
+
+  <div class="sec-h"><h2>Receitas fixas</h2><span class="sub">${brl(rendaTot)}/mês</span></div>
+  <section class="card" style="padding:4px 16px"><div class="list">${rendaRows}</div></section>
+  <button class="btn ghost block" id="addRenda" style="margin-top:12px">+ Nova receita fixa</button>
 
   <div class="sec-h"><h2>Gastos fixos</h2><span class="sub">${brl(fixosTot)}/mês</span></div>
   <section class="card" style="padding:4px 16px"><div class="list">${fixoRows}</div></section>
@@ -910,14 +981,18 @@ function forecastData(){
   const base=new Date();base.setDate(1);
   const subsMonthly=S.subscriptions.filter(s=>s.active!==false).reduce((a,s)=>a+monthlyCost(s),0);
   const fxMonthly=fixosMensal();
+  const rdMonthly=rendaMensal();
+  let proj=carriedBalance(sod(new Date(Date.now()+86400000))); // dinheiro em caixa hoje
   const out=[];
   for(let i=0;i<n;i++){
     const d=new Date(base.getFullYear(),base.getMonth()+i,1);
     const items=S.transactions.filter(t=>t.previsto&&sameMonth(parseD(t.date),d)).sort((a,b)=>b.amount-a.amount);
     const parcelas=items.reduce((a,t)=>a+t.amount,0);
-    // o mês atual já tem os fixos lançados (contam no Saiu da Visão); projetamos só os meses futuros
     const fixos = i===0 ? 0 : fxMonthly;
-    out.push({d,items,parcelas,assin:subsMonthly,fixos,total:parcelas+subsMonthly+fixos});
+    const renda = i===0 ? 0 : rdMonthly;
+    const total=parcelas+subsMonthly+fixos;
+    if(i>0) proj = proj + renda - total; // saldo projetado ao fim do mês
+    out.push({d,items,parcelas,assin:subsMonthly,fixos,renda,total,projCash:proj});
   }
   return out;
 }
@@ -950,6 +1025,15 @@ function viewForecast(){
     <button data-h="12" class="${n===12?'on':''}">12 meses</button>
   </div>
   <section class="card chartcard"><div class="barwrap"><canvas id="fcbars"></canvas></div></section>
+
+  <div class="sec-h"><h2>Saldo projetado</h2><span class="sub">em caixa, mês a mês</span></div>
+  <section class="card hero" style="padding:16px;margin-bottom:10px">
+    <div class="cap">Em caixa projetado em ${n-1} ${n-1===1?'mês':'meses'}</div>
+    <div class="bal num ${data[data.length-1].projCash>=0?'pos':'neg'}" style="font-size:30px">${brl(data[data.length-1].projCash)}</div>
+    <div style="font-size:12px;color:var(--muted);margin-top:4px">considerando receitas fixas (+${brl(rendaMensal())}/mês) menos gastos fixos, assinaturas e parcelas</div>
+  </section>
+  <section class="card chartcard" style="margin-bottom:12px"><div class="barwrap"><canvas id="projchart"></canvas></div></section>
+
   <div class="sec-h"><h2>Mês a mês</h2><span class="sub">toque para detalhar</span></div>
   ${rows}
   ${!temParcelas?'<p class="hint" style="text-align:center;margin-top:8px">Importe uma fatura (menu ≡) com compras parceladas para ver as parcelas futuras aqui.</p>':''}
@@ -967,6 +1051,14 @@ function drawForecastChart(){
       plugins:{legend:{labels:{color:ink,boxWidth:10,boxHeight:10,usePointStyle:true,font:{family:'Inter',size:12}}},tooltip:{callbacks:{label:c=>c.dataset.label+': '+brl(c.raw)}}},
       scales:{x:{stacked:true,grid:{display:false},ticks:{color:muted,font:{size:11}}},
         y:{stacked:true,grid:{color:line},ticks:{color:muted,font:{size:11},callback:v=>hideVals?'':(v>=1000?(v/1000)+'k':v)}}}}});
+  const pc=$('#projchart');
+  if(pc){
+    charts.proj=new Chart(pc,{type:'line',data:{labels:data.map(m=>mShort(m.d)),datasets:[
+      {label:'Saldo projetado',data:data.map(m=>m.projCash),borderColor:cssv('--accent'),backgroundColor:'transparent',borderWidth:2,tension:.3,pointRadius:3,pointBackgroundColor:cssv('--accent')}]},
+      options:{responsive:true,maintainAspectRatio:false,
+        plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>'Saldo: '+brl(c.raw)}}},
+        scales:{x:{grid:{display:false},ticks:{color:muted,font:{size:11}}},y:{grid:{color:line},ticks:{color:muted,font:{size:11},callback:v=>hideVals?'':(v>=1000?(v/1000)+'k':v)}}}}});
+  }
 }
 
 /* ----- empty states ----- */
@@ -979,6 +1071,7 @@ function wireViewEvents(){
   $$('[data-edit]').forEach(el=>el.onclick=()=>openTx(el.dataset.edit));
   $$('[data-subedit]').forEach(el=>el.onclick=()=>openSub(el.dataset.subedit));
   $$('[data-fixoedit]').forEach(el=>el.onclick=()=>openFixo(el.dataset.fixoedit));
+  $$('[data-rendaedit]').forEach(el=>el.onclick=()=>openRenda(el.dataset.rendaedit));
   $$('[data-accedit]').forEach(el=>el.onclick=()=>openAcc(el.dataset.accedit));
   $$('[data-accdetail]').forEach(el=>el.onclick=()=>openAccountDetail(el.dataset.accdetail));
   $$('[data-cardedit]').forEach(el=>el.onclick=()=>openCard(el.dataset.cardedit));
@@ -995,6 +1088,7 @@ function wireViewEvents(){
   $$('[data-fc]').forEach(el=>el.onclick=()=>{const k=el.dataset.fc;ui.fcOpen.has(k)?ui.fcOpen.delete(k):ui.fcOpen.add(k);render();});
   const g=$('#addSub');if(g)g.onclick=()=>openSub();
   const gf=$('#addFixo');if(gf)gf.onclick=()=>openFixo();
+  const gr=$('#addRenda');if(gr)gr.onclick=()=>openRenda();
   const a=$('#addAcc');if(a)a.onclick=()=>openAcc();
   const c=$('#addCard');if(c)c.onclick=()=>openCard();
   const ea=$('#emptyAdd');if(ea)ea.onclick=()=>openTx();
@@ -1013,6 +1107,39 @@ function accOptions(sel){return S.accounts.map(a=>`<option value="${a.id}" ${a.i
 function cardOptions(sel){return S.cards.map(c=>`<option value="${c.id}" ${c.id===sel?'selected':''}>${esc(c.name)}</option>`).join('');}
 
 /* transaction */
+function openTransfer(){
+  const opts=`<optgroup label="Contas">${S.accounts.map(a=>`<option value="acc:${a.id}">${esc(a.name)}</option>`).join('')}</optgroup><optgroup label="Cofrinho"><option value="cofrinho">Cofrinho</option></optgroup>`;
+  const opts2=`<optgroup label="Contas">${S.accounts.map((a,i)=>`<option value="acc:${a.id}" ${i===1?'selected':''}>${esc(a.name)}</option>`).join('')}</optgroup><optgroup label="Cofrinho"><option value="cofrinho" ${S.accounts.length<2?'selected':''}>Cofrinho</option></optgroup>`;
+  openSheet(`<h2>Transferência</h2>
+    <div class="field"><label>De</label><select id="trFrom">${opts}</select></div>
+    <div class="field"><label>Para</label><select id="trTo">${opts2}</select></div>
+    <div class="row2">
+      <div class="field"><label>Valor</label><input id="trAmt" type="number" step="0.01" inputmode="decimal" placeholder="0,00"></div>
+      <div class="field"><label>Data</label><input id="trDate" type="date" value="${todayStr()}"></div>
+    </div>
+    <div class="sheet-actions"><button class="btn ghost" id="trCancel">Cancelar</button><button class="btn" id="trOk">Transferir</button></div>
+    <p class="hint">Transferência não conta como gasto nem receita. Mover para o cofrinho sai do "Em caixa"; resgatar volta pro caixa.</p>`);
+  $('#trCancel').onclick=closeSheet;
+  $('#trOk').onclick=()=>{
+    const from=$('#trFrom').value, to=$('#trTo').value, amt=Math.abs(parseFloat($('#trAmt').value)||0), date=$('#trDate').value||todayStr();
+    if(!amt){$('#trAmt').focus();return;}
+    if(from===to){alert('Escolha origem e destino diferentes.');return;}
+    if(!S.cofrinho)S.cofrinho={deposits:[],metaMes:0,metaSemestre:0,metaAno:0};
+    const accName=id=>accById(id)?.name||'conta';
+    if(from.startsWith('acc:')&&to.startsWith('acc:')){
+      const s=from.slice(4),d=to.slice(4);
+      S.transactions.push({id:uid(),type:'expense',amount:amt,desc:'Transferência para '+accName(d),categoryId:null,date,account:s,card:null,subId:null,transfer:true});
+      S.transactions.push({id:uid(),type:'income',amount:amt,desc:'Transferência de '+accName(s),categoryId:null,date,account:d,card:null,subId:null,transfer:true});
+    } else if(from.startsWith('acc:')&&to==='cofrinho'){
+      S.transactions.push({id:uid(),type:'expense',amount:amt,desc:'Transferência para cofrinho',categoryId:null,date,account:from.slice(4),card:null,subId:null,transfer:true});
+      S.cofrinho.deposits.push({id:uid(),date,amount:amt});
+    } else if(from==='cofrinho'&&to.startsWith('acc:')){
+      S.transactions.push({id:uid(),type:'income',amount:amt,desc:'Resgate do cofrinho',categoryId:null,date,account:to.slice(4),card:null,subId:null,transfer:true});
+      S.cofrinho.deposits.push({id:uid(),date,amount:-amt});
+    } else { alert('Transferência inválida.'); return; }
+    save(); closeSheet(); render();
+  };
+}
 function openTx(id){
   const t=id?S.transactions.find(x=>x.id===id):null;
   const type=t?t.type:'expense';
@@ -1261,6 +1388,7 @@ function openMenu(){
     <button class="menu-item" id="mExport"><span class="mi">↓</span><div>Fazer backup<small>baixa um arquivo .json com tudo</small></div></button>
     <button class="menu-item" id="mImportJson"><span class="mi">↑</span><div>Restaurar backup<small>carrega um .json salvo antes</small></div></button>
     <button class="menu-item" id="mImportCsv"><span class="mi">≣</span><div>Importar extrato<small>PDF (a IA lê) · ou CSV/OFX</small></div></button>
+    <button class="menu-item" id="mTransfer"><span class="mi">⇄</span><div>Transferência<small>entre contas ou para o cofrinho</small></div></button>
     <button class="menu-item" id="mImportPdf"><span class="mi">✦</span><div>Importar fatura (PDF)<small>a IA lê as compras e parcelas</small></div></button>
     <button class="menu-item" id="mCats"><span class="mi">◍</span><div>Categorias<small>${S.categories.length} cadastradas</small></div></button>
     <button class="menu-item" id="mBudgets"><span class="mi">◑</span><div>Orçamentos<small>metas de gasto por categoria</small></div></button>
@@ -1275,6 +1403,7 @@ function openMenu(){
   $('#mExport').onclick=exportJson;
   $('#mImportJson').onclick=()=>pickFile('json');
   $('#mImportCsv').onclick=()=>pickFile('csv');
+  $('#mTransfer').onclick=openTransfer;
   $('#mImportPdf').onclick=()=>pickFile('pdf');
   $('#mOF').onclick=openOpenFinance;
   $('#mCats').onclick=openCats;
@@ -1397,7 +1526,7 @@ function openGoal(id){
 function openReport(){
   const ref=new Date(ui.ref); const r=range('month',ref);
   const monthList=S.transactions.filter(t=>{const d=parseD(t.date);return d>=r.start&&d<=r.end;});
-  const spendMonth=monthList.filter(t=>!(t.type==='expense'&&t.faturaOf));
+  const spendMonth=monthList.filter(t=>!t.transfer&&!(t.type==='expense'&&t.faturaOf));
   const inc=monthList.filter(t=>t.type==='income').reduce((a,t)=>a+t.amount,0);
   const exp=spendMonth.filter(t=>t.type==='expense').reduce((a,t)=>a+t.amount,0);
   const cashNet=monthList.filter(t=>t.account&&!t.card).reduce((a,t)=>a+(t.type==='income'?t.amount:-t.amount),0);
@@ -1956,6 +2085,7 @@ $('#menuBtn').onclick=openMenu;
 window.addEventListener('keydown',e=>{if(e.key==='Escape')closeSheet();});
 
 materializeFixos();
+materializeRenda();
 render();
 initAuth();
 </script>
