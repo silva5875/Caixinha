@@ -384,6 +384,8 @@ function sanitizeState(raw){
       subId:_str(t.subId,64)||null,previsto:!!t.previsto};
     if(t.extId)o.extId=_str(t.extId,200);
     if(t.fixo)o.fixo=true;
+    if(t.paid)o.paid=true;
+    if(t.faturaOf)o.faturaOf=_str(t.faturaOf,64);
     return o;
   }).filter(t=>t.amount>0);
   out.subscriptions=(Array.isArray(raw.subscriptions)?raw.subscriptions:[]).slice(0,1000).map(s=>({
@@ -497,7 +499,7 @@ function invoiceCycle(card,ref=new Date()){
 function cardInvoice(card){
   const{start,end}=invoiceCycle(card);
   let sum=0;
-  S.transactions.forEach(t=>{ if(t.card===card.id&&t.type==='expense'){const d=parseD(t.date);if(d>=start&&d<=end)sum+=t.amount;} });
+  S.transactions.forEach(t=>{ if(t.card===card.id&&t.type==='expense'&&!t.paid&&!t.previsto){const d=parseD(t.date);if(d>=start&&d<=end)sum+=t.amount;} });
   return sum;
 }
 
@@ -527,23 +529,28 @@ function render(){
 
 /* ----- overview ----- */
 function carriedBalance(beforeDate){
-  // saldo em caixa acumulado: saldos iniciais + tudo que entrou − tudo que saiu antes da data
+  // dinheiro real em caixa: saldos iniciais + movimentos de CONTA (gasto no cartão não baixa o caixa até pagar a fatura)
   let b=S.accounts.reduce((a,ac)=>a+(ac.opening||0),0);
-  S.transactions.forEach(t=>{ if(parseD(t.date)<beforeDate){ b += t.type==='income'? t.amount : -t.amount; } });
+  S.transactions.forEach(t=>{ if(t.card||!t.account)return; if(parseD(t.date)<beforeDate){ b += t.type==='income'? t.amount : -t.amount; } });
   return b;
 }
 function viewOverview(){
   const list=txInRange();
-  const {inc,exp,net}=sums(list);
+  // visão de GASTOS: compras (cartão + conta); exclui pagamentos de fatura (quitação de dívida, não é gasto novo)
+  const spendList=list.filter(t=>!(t.type==='expense'&&t.faturaOf));
+  const {inc,exp}=sums(spendList);
   const {start}=range(ui.period,ui.ref);
+  // dinheiro em CAIXA: só movimentos de conta (inclui pagamento de fatura; exclui compras no cartão)
+  const cashNet=list.filter(t=>t.account&&!t.card).reduce((a,t)=>a+(t.type==='income'?t.amount:-t.amount),0);
   const carryIn=carriedBalance(start);
-  const accumulated=carryIn+net;
+  const accumulated=carryIn+cashNet;
+  const aPagar=S.cards.reduce((s,c)=>s+cardInvoice(c),0);
   const recent=[...list].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,6);
   const hasData=list.length>0;
   const periodWord={day:'hoje',week:'na semana',month:'no mês',year:'no ano'}[ui.period];
   // comparativo com o período anterior
   const prevR=range(ui.period,shift(ui.period,ui.ref,-1));
-  let prevExp=0; S.transactions.forEach(t=>{if(t.type==='expense'){const d=parseD(t.date);if(d>=prevR.start&&d<=prevR.end)prevExp+=t.amount;}});
+  let prevExp=0; S.transactions.forEach(t=>{if(t.type==='expense'&&!t.faturaOf){const d=parseD(t.date);if(d>=prevR.start&&d<=prevR.end)prevExp+=t.amount;}});
   const dExp=prevExp>0?(exp-prevExp)/prevExp*100:null;
   const cmp=(prevExp>0||exp>0)?`
   <section class="card" style="padding:14px 16px;margin-bottom:14px">
@@ -559,7 +566,7 @@ function viewOverview(){
   let budget='';
   if(ui.period==='month'&&S.budgets&&Object.keys(S.budgets).length){
     const spentByCat={};
-    list.filter(t=>t.type==='expense'&&t.categoryId).forEach(t=>{spentByCat[t.categoryId]=(spentByCat[t.categoryId]||0)+t.amount;});
+    spendList.filter(t=>t.type==='expense'&&t.categoryId).forEach(t=>{spentByCat[t.categoryId]=(spentByCat[t.categoryId]||0)+t.amount;});
     const budRows=Object.keys(S.budgets).map(cid=>{
       const c=catById(cid); if(!c)return '';
       const lim=S.budgets[cid], sp=spentByCat[cid]||0, pct=Math.min(sp/lim*100,100), over=sp>lim, near=!over&&sp>=lim*0.85;
@@ -577,7 +584,7 @@ function viewOverview(){
   let spendGoalHtml='';
   if(ui.period==='month'&&S.spendGoal>0){
     const pv=range('month',shift('month',ui.ref,-1)); let prevTot=0;
-    S.transactions.forEach(t=>{if(t.type==='expense'){const d=parseD(t.date);if(d>=pv.start&&d<=pv.end)prevTot+=t.amount;}});
+    S.transactions.forEach(t=>{if(t.type==='expense'&&!t.faturaOf){const d=parseD(t.date);if(d>=pv.start&&d<=pv.end)prevTot+=t.amount;}});
     const meta=S.spendGoal, pct=Math.min(exp/meta*100,100), over=exp>meta, near=!over&&exp>=meta*0.85;
     const col=over?'var(--neg)':(near?'#D99A2B':'var(--accent)'); const diff=meta-prevTot;
     spendGoalHtml=`<div class="sec-h"><h2>Meta de gastos do mês</h2><button class="link" data-openbud>editar</button></div>
@@ -619,8 +626,9 @@ function viewOverview(){
     </div>
     <div class="bal num ${accumulated>=0?'pos':'neg'}">${brl(accumulated)}</div>
     <div style="font-size:12px;color:var(--muted);margin-top:5px">
-      ${brl(carryIn)} veio de antes · ${net>=0?'+':'−'} ${brl(Math.abs(net))} ${periodWord}
+      ${brl(carryIn)} veio de antes · ${cashNet>=0?'+':'−'} ${brl(Math.abs(cashNet))} em conta ${periodWord}
     </div>
+    ${aPagar>0?`<div style="font-size:12px;color:var(--neg);font-weight:600;margin-top:4px">A pagar em cartões: ${brl(aPagar)}</div>`:''}
     <div class="flows">
       <div class="flow in"><div class="t"><span class="dot"></span>Entrou</div><div class="v num">${brl(inc)}</div></div>
       <div class="flow out"><div class="t"><span class="dot"></span>Saiu</div><div class="v num">${brl(exp)}</div></div>
@@ -633,7 +641,7 @@ function viewOverview(){
 
   ${hasData?`
   <section class="card chartcard">
-    <div class="sec-h" style="margin:0 0 6px"><h2>Para onde foi</h2><span class="sub">gastos por categoria</span></div>
+    <div class="sec-h" style="margin:0 0 6px"><h2>Para onde foi</h2><span class="sub">gastos (inclui cartão)</span></div>
     <div class="donutwrap"><canvas id="donut"></canvas>
       <div class="donut-center"><div class="c-cap">total</div><div class="c-val num">${brl(exp)}</div></div>
     </div>
@@ -655,7 +663,7 @@ function viewOverview(){
   `;
 }
 function drawOverviewCharts(){
-  const list=txInRange();
+  const list=txInRange().filter(t=>!(t.type==='expense'&&t.faturaOf));
   const cats=byCategory(list,'expense');
   const dc=$('#donut');
   if(dc&&cats.length){
@@ -669,7 +677,7 @@ function drawOverviewCharts(){
   if(bc){
     const bk=buckets(ui.period,ui.ref);
     const inD=[],outD=[];
-    bk.forEach(b=>{let i=0,o=0;S.transactions.forEach(t=>{const d=parseD(t.date);if(d>=b.start&&d<=b.end){t.type==='income'?i+=t.amount:o+=t.amount;}});inD.push(i);outD.push(o);});
+    bk.forEach(b=>{let i=0,o=0;S.transactions.forEach(t=>{if(t.type==='expense'&&t.faturaOf)return;const d=parseD(t.date);if(d>=b.start&&d<=b.end){t.type==='income'?i+=t.amount:o+=t.amount;}});inD.push(i);outD.push(o);});
     const ink=cssv('--ink'),muted=cssv('--muted'),line=cssv('--line');
     charts.bars=new Chart(bc,{type:'bar',data:{labels:bk.map(b=>b.label),datasets:[
       {label:'Entrou',data:inD,backgroundColor:cssv('--pos'),borderRadius:5,maxBarThickness:26},
@@ -1182,11 +1190,38 @@ function openCardDetail(id){
     <div style="max-height:40vh;overflow:auto;border:1px solid var(--line);border-radius:12px;padding:2px 12px">
       ${items.length?items.map(txRow).join(''):'<div class="hint" style="padding:14px 2px">Nenhum lançamento nesta fatura.</div>'}
     </div>
-    <div class="sheet-actions" style="margin-top:14px"><button class="btn ghost" id="cdEdit">Editar cartão</button><button class="btn" id="cdClose">Fechar</button></div>
+    ${used>0?`<button class="btn block" id="cdPay" style="margin-top:14px">Pagar fatura · ${brl(used)}</button>`:''}
+    <div class="sheet-actions" style="margin-top:10px"><button class="btn ghost" id="cdEdit">Editar cartão</button><button class="btn ghost" id="cdClose">Fechar</button></div>
   `);
+  const cp=$('#cdPay'); if(cp)cp.onclick=()=>openPayInvoice(id);
   $('#cdEdit').onclick=()=>openCard(id);
   $('#cdClose').onclick=closeSheet;
   $$('[data-edit]',sheet).forEach(el=>el.onclick=()=>openTx(el.dataset.edit));
+}
+function openPayInvoice(cardId){
+  const c=cardById(cardId); if(!c)return;
+  const {start,end}=invoiceCycle(c);
+  const items=S.transactions.filter(t=>t.card===c.id&&t.type==='expense'&&!t.paid&&!t.previsto&&parseD(t.date)>=start&&parseD(t.date)<=end);
+  const total=items.reduce((s,t)=>s+t.amount,0);
+  if(total<=0){alert('Não há fatura em aberto neste cartão.');return;}
+  if(!S.accounts.length){alert('Cadastre uma conta antes de pagar a fatura.');return;}
+  const contasCat=S.categories.find(x=>x.kind==='expense'&&x.name==='Contas')?.id;
+  openSheet(`<h2>Pagar fatura · ${esc(c.name)}</h2>
+    <div class="subtotal"><div><div style="font-size:12px;color:var(--muted);font-weight:600">Fatura aberta</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:4px">${items.length} lançamento(s)</div></div>
+      <div class="v num" style="color:var(--neg)">${brl(total)}</div></div>
+    <div class="field"><label>Pagar com (conta)</label><select id="pfAcc">${accOptions(S.accounts[0]&&S.accounts[0].id)}</select></div>
+    <div class="field"><label>Data do pagamento</label><input id="pfDate" type="date" value="${todayStr()}"></div>
+    <p class="hint">Cria uma saída em conta (dinheiro saindo do caixa) e marca os lançamentos desta fatura como pagos — assim o gasto do cartão não é contado duas vezes.</p>
+    <div class="sheet-actions"><button class="btn ghost" id="pfCancel">Cancelar</button><button class="btn" id="pfOk">Pagar ${brl(total)}</button></div>`);
+  $('#pfCancel').onclick=()=>openCardDetail(cardId);
+  $('#pfOk').onclick=()=>{
+    const accId=$('#pfAcc').value, date=$('#pfDate').value||todayStr();
+    items.forEach(t=>t.paid=true);
+    S.transactions.push({id:uid(),type:'expense',amount:total,desc:'Pagamento fatura '+c.name,categoryId:contasCat||null,date,account:accId,card:null,subId:null,faturaOf:c.id});
+    save(); closeSheet(); render();
+    alert('Fatura paga: '+brl(total)+'. Saiu do caixa uma vez.');
+  };
 }
 
 function openCard(id){
@@ -1362,12 +1397,14 @@ function openGoal(id){
 function openReport(){
   const ref=new Date(ui.ref); const r=range('month',ref);
   const monthList=S.transactions.filter(t=>{const d=parseD(t.date);return d>=r.start&&d<=r.end;});
+  const spendMonth=monthList.filter(t=>!(t.type==='expense'&&t.faturaOf));
   const inc=monthList.filter(t=>t.type==='income').reduce((a,t)=>a+t.amount,0);
-  const exp=monthList.filter(t=>t.type==='expense').reduce((a,t)=>a+t.amount,0);
-  const emCaixa=carriedBalance(r.start)+(inc-exp);
-  const cats=byCategory(monthList,'expense').slice(0,5);
+  const exp=spendMonth.filter(t=>t.type==='expense').reduce((a,t)=>a+t.amount,0);
+  const cashNet=monthList.filter(t=>t.account&&!t.card).reduce((a,t)=>a+(t.type==='income'?t.amount:-t.amount),0);
+  const emCaixa=carriedBalance(r.start)+cashNet;
+  const cats=byCategory(spendMonth,'expense').slice(0,5);
   const totExp=exp||1;
-  const big=[...monthList].filter(t=>t.type==='expense').sort((a,b)=>b.amount-a.amount).slice(0,5);
+  const big=[...spendMonth].filter(t=>t.type==='expense').sort((a,b)=>b.amount-a.amount).slice(0,5);
   const recorrente=fixosMensal()+S.subscriptions.filter(s=>s.active!==false).reduce((a,s)=>a+monthlyCost(s),0);
   const label=mFull(ref);
   const catList=cats.map(c=>`<div style="display:flex;justify-content:space-between;font-size:13px;padding:5px 0"><span><span style="width:8px;height:8px;border-radius:50%;background:${c.color};display:inline-block;margin-right:6px"></span>${esc(c.name)}</span><span class="num">${brl(c.total)} · ${Math.round(c.total/totExp*100)}%</span></div>`).join('')||'<div class="hint" style="padding:6px 0">Sem gastos no mês.</div>';
