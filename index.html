@@ -338,7 +338,9 @@ function seedEmpty(){
     subscriptions:[],
     fixos:[],
     budgets:{},
-    goals:[]
+    goals:[],
+    spendGoal:0,
+    cofrinho:{deposits:[],metaMes:0,metaSemestre:0,metaAno:0}
   };
 }
 function defaultCats(){
@@ -404,6 +406,12 @@ function sanitizeState(raw){
     id:_str(g.id,64)||uid(),name:_str(g.name,80)||'Meta',target:Math.abs(_num(g.target)),
     saved:Math.max(0,_num(g.saved)),color:_str(g.color,16)||'#888888'
   }));
+  out.spendGoal=Math.max(0,_num(raw.spendGoal));
+  const cof=raw.cofrinho&&typeof raw.cofrinho==='object'?raw.cofrinho:{};
+  out.cofrinho={
+    deposits:(Array.isArray(cof.deposits)?cof.deposits:[]).slice(0,2000).map(d=>({id:_str(d.id,64)||uid(),date:_date(d.date),amount:Math.abs(_num(d.amount))})).filter(d=>d.amount>0),
+    metaMes:Math.max(0,_num(cof.metaMes)),metaSemestre:Math.max(0,_num(cof.metaSemestre)),metaAno:Math.max(0,_num(cof.metaAno))
+  };
   return out;
 }
 const catById=id=>S.categories.find(c=>c.id===id);
@@ -563,7 +571,24 @@ function viewOverview(){
         <div class="bar-mini"><span style="width:${pct}%;background:${col}"></span></div>
         ${over?`<div style="font-size:11px;color:var(--neg);margin-top:4px">Estourou ${brl(sp-lim)}</div>`:(near?`<div style="font-size:11px;color:#D99A2B;margin-top:4px">Perto do limite</div>`:'')}
       </div>`;}).filter(Boolean).join('');
-    if(budRows)budget=`<div class="sec-h"><h2>Orçamento do mês</h2><button class="link" data-openbud>editar</button></div><section class="card" style="padding:6px 16px">${budRows}</section>`;
+    if(budRows)budget=`<div class="sec-h"><h2>Orçamento por categoria</h2><button class="link" data-openbud>editar</button></div><section class="card" style="padding:6px 16px">${budRows}</section>`;
+  }
+  // meta de gastos geral do mês
+  let spendGoalHtml='';
+  if(ui.period==='month'&&S.spendGoal>0){
+    const pv=range('month',shift('month',ui.ref,-1)); let prevTot=0;
+    S.transactions.forEach(t=>{if(t.type==='expense'){const d=parseD(t.date);if(d>=pv.start&&d<=pv.end)prevTot+=t.amount;}});
+    const meta=S.spendGoal, pct=Math.min(exp/meta*100,100), over=exp>meta, near=!over&&exp>=meta*0.85;
+    const col=over?'var(--neg)':(near?'#D99A2B':'var(--accent)'); const diff=meta-prevTot;
+    spendGoalHtml=`<div class="sec-h"><h2>Meta de gastos do mês</h2><button class="link" data-openbud>editar</button></div>
+    <section class="card" style="padding:14px 16px">
+      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px">
+        <span style="font-weight:500">Gasto / meta</span>
+        <span class="num" style="color:${over?'var(--neg)':'var(--muted)'}">${brl(exp)} / ${brl(meta)}</span></div>
+      <div class="bar-mini"><span style="width:${pct}%;background:${col}"></span></div>
+      <div style="font-size:12px;color:var(--muted);margin-top:8px">Mês passado: ${brl(prevTot)}${prevTot>0?` · meta ${diff<0?brl(diff)+' (gastar menos)':(diff>0?'+'+brl(diff)+' (gastar mais)':'igual')}`:''}</div>
+      ${over?`<div style="font-size:11px;color:var(--neg);margin-top:4px">Estourou a meta em ${brl(exp-meta)}</div>`:''}
+    </section>`;
   }
   // avisos / lembretes
   const alerts=[];
@@ -614,6 +639,8 @@ function viewOverview(){
     </div>
     <div class="legend" id="legend"></div>
   </section>
+
+  ${spendGoalHtml}
 
   ${budget}
 
@@ -1203,6 +1230,7 @@ function openMenu(){
     <button class="menu-item" id="mCats"><span class="mi">◍</span><div>Categorias<small>${S.categories.length} cadastradas</small></div></button>
     <button class="menu-item" id="mBudgets"><span class="mi">◑</span><div>Orçamentos<small>metas de gasto por categoria</small></div></button>
     <button class="menu-item" id="mGoals"><span class="mi">◎</span><div>Metas de economia<small>reserva, viagem, objetivos</small></div></button>
+    <button class="menu-item" id="mCofrinho"><span class="mi">▣</span><div>Cofrinho<small>guardar por mês, semestre e ano</small></div></button>
     <button class="menu-item" id="mReport"><span class="mi">▤</span><div>Relatório do mês<small>resumo com totais e destaques</small></div></button>
     <button class="menu-item" id="mOF"><span class="mi">⇄</span><div>Open Finance<small>conectar bancos automaticamente</small></div></button>
     <button class="menu-item" id="mWipe" style="color:var(--neg)"><span class="mi">⌫</span><div>Apagar todos os dados<small>recomeçar do zero</small></div></button>
@@ -1217,8 +1245,71 @@ function openMenu(){
   $('#mCats').onclick=openCats;
   $('#mBudgets').onclick=openBudgets;
   $('#mGoals').onclick=openGoals;
+  $('#mCofrinho').onclick=openCofrinho;
   $('#mReport').onclick=openReport;
   $('#mWipe').onclick=()=>{ if(confirm('Apagar tudo? Faça um backup antes se quiser guardar.')){S=seedEmpty();save();closeSheet();render();} };
+}
+function semesterRange(ref){ const d=ref||new Date(); const y=d.getFullYear(); const h=d.getMonth()<6?0:6; return {start:sod(new Date(y,h,1)),end:eod(new Date(y,h+6,0))}; }
+function openCofrinho(){
+  const cof=S.cofrinho||{deposits:[],metaMes:0,metaSemestre:0,metaAno:0};
+  const dep=cof.deposits||[];
+  const total=dep.reduce((a,d)=>a+d.amount,0);
+  const now=new Date();
+  const inRange=(r)=>dep.filter(d=>{const x=parseD(d.date);return x>=r.start&&x<=r.end;}).reduce((a,d)=>a+d.amount,0);
+  const savedMes=inRange(range('month',now)), savedSem=inRange(semesterRange(now)), savedAno=inRange(range('year',now));
+  const bar=(saved,meta)=>{ if(!meta)return `<div class="meta">${brl(saved)} guardado (sem meta)</div>`;
+    const pct=Math.min(saved/meta*100,100), done=saved>=meta;
+    return `<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px"><span>${brl(saved)} de ${brl(meta)}</span><span class="num" style="color:${done?'var(--pos)':'var(--muted)'}">${Math.round(pct)}%</span></div><div class="bar-mini"><span style="width:${pct}%;background:${done?'var(--pos)':'var(--accent)'}"></span></div>`; };
+  const depRows=[...dep].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,20).map(d=>`<div class="tx" data-depdel="${d.id}" style="padding:10px 2px">
+    <div class="mid"><div class="d">Depósito</div><div class="m">${new Intl.DateTimeFormat('pt-BR',{day:'2-digit',month:'short',year:'numeric'}).format(parseD(d.date))}</div></div>
+    <div class="amt num" style="color:var(--pos)">+ ${brl(d.amount)}</div></div>`).join('')||emptyInline('Nenhum depósito ainda');
+  openSheet(`<h2>Cofrinho</h2>
+    <section class="card hero" style="padding:18px;margin-bottom:12px">
+      <div class="cap">Total guardado</div>
+      <div class="bal num pos">${brl(total)}</div>
+    </section>
+    <div class="sec-h" style="margin:4px 2px 6px"><h2 style="font-size:13px">Este mês</h2></div>
+    <section class="card" style="padding:12px 16px">${bar(savedMes,cof.metaMes)}</section>
+    <div class="sec-h" style="margin:12px 2px 6px"><h2 style="font-size:13px">Este semestre</h2></div>
+    <section class="card" style="padding:12px 16px">${bar(savedSem,cof.metaSemestre)}</section>
+    <div class="sec-h" style="margin:12px 2px 6px"><h2 style="font-size:13px">Este ano</h2></div>
+    <section class="card" style="padding:12px 16px">${bar(savedAno,cof.metaAno)}</section>
+    <div class="sheet-actions" style="margin-top:14px"><button class="btn ghost" id="cofMetas">Definir metas</button><button class="btn" id="cofAdd">+ Guardar</button></div>
+    <div class="sec-h" style="margin:16px 2px 6px"><h2 style="font-size:13px">Depósitos</h2></div>
+    <section class="card" style="padding:4px 16px"><div class="list">${depRows}</div></section>
+    <button class="btn ghost block" id="cofBack" style="margin-top:12px">Voltar</button>
+    <p class="hint" style="margin-top:10px">O cofrinho é um acompanhamento à parte — registra o quanto você guardou. Não desconta do "Em caixa" automaticamente.</p>`);
+  $('#cofBack').onclick=openMenu;
+  $('#cofAdd').onclick=openCofrinhoAdd;
+  $('#cofMetas').onclick=openCofrinhoMetas;
+  $$('[data-depdel]').forEach(el=>el.onclick=()=>{ if(!confirm('Remover este depósito do cofrinho?'))return; S.cofrinho.deposits=S.cofrinho.deposits.filter(x=>x.id!==el.dataset.depdel); save(); openCofrinho(); });
+}
+function openCofrinhoAdd(){
+  openSheet(`<h2>Guardar no cofrinho</h2>
+    <div class="row2">
+      <div class="field"><label>Valor</label><input id="cdAmt" type="number" step="0.01" inputmode="decimal" placeholder="0,00"></div>
+      <div class="field"><label>Data</label><input id="cdDate" type="date" value="${todayStr()}"></div>
+    </div>
+    <div class="sheet-actions"><button class="btn ghost" id="cdCancel">Cancelar</button><button class="btn" id="cdSave">Guardar</button></div>`);
+  $('#cdCancel').onclick=openCofrinho;
+  $('#cdSave').onclick=()=>{ const amt=parseFloat($('#cdAmt').value); if(!amt||amt<=0){$('#cdAmt').focus();return;}
+    if(!S.cofrinho)S.cofrinho={deposits:[],metaMes:0,metaSemestre:0,metaAno:0};
+    S.cofrinho.deposits.push({id:uid(),date:$('#cdDate').value||todayStr(),amount:Math.abs(amt)}); save(); openCofrinho(); };
+  setTimeout(()=>$('#cdAmt').focus(),120);
+}
+function openCofrinhoMetas(){
+  const cof=S.cofrinho||{};
+  openSheet(`<h2>Metas do cofrinho</h2>
+    <div class="field"><label>Meta por mês</label><input id="cmMes" type="number" step="0.01" inputmode="decimal" placeholder="0,00" value="${cof.metaMes>0?cof.metaMes:''}"></div>
+    <div class="field"><label>Meta por semestre (6 meses)</label><input id="cmSem" type="number" step="0.01" inputmode="decimal" placeholder="0,00" value="${cof.metaSemestre>0?cof.metaSemestre:''}"></div>
+    <div class="field"><label>Meta por ano</label><input id="cmAno" type="number" step="0.01" inputmode="decimal" placeholder="0,00" value="${cof.metaAno>0?cof.metaAno:''}"></div>
+    <div class="sheet-actions"><button class="btn ghost" id="cmCancel">Cancelar</button><button class="btn" id="cmSave">Salvar</button></div>`);
+  $('#cmCancel').onclick=openCofrinho;
+  $('#cmSave').onclick=()=>{ if(!S.cofrinho)S.cofrinho={deposits:[]};
+    S.cofrinho.metaMes=Math.max(0,parseFloat($('#cmMes').value)||0);
+    S.cofrinho.metaSemestre=Math.max(0,parseFloat($('#cmSem').value)||0);
+    S.cofrinho.metaAno=Math.max(0,parseFloat($('#cmAno').value)||0);
+    save(); openCofrinho(); };
 }
 function openGoals(){
   const gs=S.goals||[];
@@ -1309,14 +1400,17 @@ function openBudgets(){
     <input data-bud="${c.id}" type="number" step="0.01" inputmode="decimal" placeholder="sem meta" value="${S.budgets&&S.budgets[c.id]?S.budgets[c.id]:''}" style="width:110px;text-align:right">
   </div>`).join('');
   openSheet(`<h2>Orçamentos do mês</h2>
-    <p class="hint" style="margin:0 0 12px">Defina um teto de gasto mensal por categoria. Deixe em branco para não ter meta. O progresso aparece na Visão.</p>
-    <div style="max-height:50vh;overflow:auto">${rows}</div>
+    <div class="field"><label>Meta de gastos TOTAL do mês</label><input id="budTotal" type="number" step="0.01" inputmode="decimal" placeholder="sem meta" value="${S.spendGoal>0?S.spendGoal:''}"></div>
+    <p class="hint" style="margin:0 0 10px">Teto geral de gastos do mês. Na Visão você vê o quanto já gastou vs. a meta e a diferença pro mês passado.</p>
+    <div class="sec-h" style="margin:4px 2px 6px"><h2 style="font-size:13px;color:var(--muted)">Por categoria</h2></div>
+    <p class="hint" style="margin:0 0 10px">Teto por categoria (deixe em branco para não ter meta).</p>
+    <div style="max-height:44vh;overflow:auto">${rows}</div>
     <div class="sheet-actions" style="margin-top:14px"><button class="btn ghost" id="budBack">Voltar</button><button class="btn" id="budSave">Salvar</button></div>`);
   $('#budBack').onclick=openMenu;
   $('#budSave').onclick=()=>{
     const b={};
     $$('[data-bud]').forEach(inp=>{const v=parseFloat(inp.value);if(v>0)b[inp.dataset.bud]=Math.abs(v);});
-    S.budgets=b; save(); closeSheet(); render();
+    S.budgets=b; S.spendGoal=Math.max(0,parseFloat($('#budTotal').value)||0); save(); closeSheet(); render();
   };
 }
 function openCats(){
