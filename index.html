@@ -228,7 +228,7 @@ input,select{font-family:inherit;font-size:16px}
   <button data-v="overview" class="on"><span class="ti">◉</span>Visão</button>
   <button data-v="tx"><span class="ti">≣</span>Lançamentos</button>
   <button data-v="forecast"><span class="ti">↗</span>Previsão</button>
-  <button data-v="subs"><span class="ti">↻</span>Assinaturas</button>
+  <button data-v="subs"><span class="ti">↻</span>Recorrentes</button>
   <button data-v="accounts"><span class="ti">▦</span>Contas</button>
 </nav>
 
@@ -318,7 +318,8 @@ function seedEmpty(){
     cards:[],
     categories:defaultCats(),
     transactions:[],
-    subscriptions:[]
+    subscriptions:[],
+    fixos:[]
   };
 }
 function defaultCats(){
@@ -361,12 +362,19 @@ function sanitizeState(raw){
       account:accIds.has(t.account)?t.account:null,card:cardIds.has(t.card)?t.card:null,
       subId:_str(t.subId,64)||null,previsto:!!t.previsto};
     if(t.extId)o.extId=_str(t.extId,200);
+    if(t.fixo)o.fixo=true;
     return o;
   }).filter(t=>t.amount>0);
   out.subscriptions=(Array.isArray(raw.subscriptions)?raw.subscriptions:[]).slice(0,1000).map(s=>({
     id:_str(s.id,64)||uid(),name:_str(s.name,80)||'Assinatura',amount:Math.abs(_num(s.amount)),
     freq:_enum(s.freq,['monthly','yearly','weekly'],'monthly'),categoryId:catIds.has(s.categoryId)?s.categoryId:null,
     nextDate:_date(s.nextDate),active:s.active!==false
+  }));
+  out.fixos=(Array.isArray(raw.fixos)?raw.fixos:[]).slice(0,500).map(f=>({
+    id:_str(f.id,64)||uid(),name:_str(f.name,80)||'Gasto fixo',amount:Math.abs(_num(f.amount)),
+    day:_day(f.day,1),categoryId:catIds.has(f.categoryId)?f.categoryId:null,
+    account:accIds.has(f.account)?f.account:null,card:cardIds.has(f.card)?f.card:null,
+    active:f.active!==false,since:/^\d{4}-\d{2}$/.test(f.since||'')?f.since:null
   }));
   return out;
 }
@@ -610,26 +618,121 @@ function viewTx(){
 
 /* ----- subscriptions ----- */
 function monthlyCost(s){ return s.freq==='yearly'? s.amount/12 : s.freq==='weekly'? s.amount*4.33 : s.amount; }
+const ym=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+function fixosMensal(){ return (S.fixos||[]).filter(f=>f.active!==false).reduce((a,f)=>a+f.amount,0); }
+
+/* materializa os gastos fixos como saída real de cada mês (do mês de início até o mês atual) */
+function materializeFixos(){
+  if(!S.fixos||!S.fixos.length)return false;
+  const have=new Set(S.transactions.map(t=>t.extId).filter(Boolean));
+  const now=new Date(), curY=now.getFullYear(), curM=now.getMonth();
+  let added=0;
+  S.fixos.forEach(f=>{
+    if(f.active===false)return;
+    const [sy,sm]=(f.since||ym(now)).split('-').map(Number);
+    let y=sy, m=(sm||1)-1;
+    while(y<curY || (y===curY && m<=curM)){
+      const key=`fixo:${f.id}:${y}-${String(m+1).padStart(2,'0')}`;
+      if(!have.has(key)){
+        const day=Math.min(Math.max(f.day||1,1),28);
+        const date=`${y}-${String(m+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+        S.transactions.push({id:uid(),extId:key,type:'expense',amount:f.amount,desc:f.name,
+          categoryId:f.categoryId||null,date,account:f.card?null:(f.account||(S.accounts[0]&&S.accounts[0].id)||null),card:f.card||null,subId:null,fixo:true});
+        have.add(key); added++;
+      }
+      m++; if(m>11){m=0;y++;}
+    }
+  });
+  if(added)save();
+  return added>0;
+}
+
+/* verifica se já existe um lançamento equivalente (valor + data próxima + nome parecido) */
+function isDuplicate(amount,dateStr,desc,type,list){
+  const d0=parseD(dateStr||todayStr()).getTime();
+  const nd=normName(desc);
+  const cents=Math.round((amount||0)*100);
+  return (list||S.transactions).some(t=>{
+    if(t.previsto)return false;
+    if(t.type!==type)return false;
+    if(Math.round(t.amount*100)!==cents)return false;
+    const dd=Math.abs(parseD(t.date).getTime()-d0)/86400000;
+    if(dd>3)return false;
+    const tn=normName(t.desc);
+    if(!nd||!tn)return true; // sem nome: casa por valor+data
+    if(tn===nd||tn.includes(nd)||nd.includes(tn))return true;
+    const a=tn.split(' ').filter(w=>w.length>2), b=new Set(nd.split(' ').filter(w=>w.length>2));
+    return a.some(w=>b.has(w));
+  });
+}
+
+function openFixo(id){
+  const f=id?S.fixos.find(x=>x.id===id):null;
+  openSheet(`<h2>${f?'Editar gasto fixo':'Novo gasto fixo'}</h2>
+    <div class="field"><label>Nome</label><input id="fxName" placeholder="Ex.: Aluguel" value="${f?esc(f.name):''}"></div>
+    <div class="row2">
+      <div class="field"><label>Valor</label><input id="fxAmt" type="number" step="0.01" inputmode="decimal" placeholder="0,00" value="${f?f.amount:''}"></div>
+      <div class="field"><label>Dia do mês</label><input id="fxDay" type="number" min="1" max="28" value="${f?f.day:5}"></div>
+    </div>
+    <div class="row2">
+      <div class="field"><label>Categoria</label><select id="fxCat">${catOptions('expense',f?.categoryId)}</select></div>
+      <div class="field"><label>Pago com</label><select id="fxSrc">
+        <optgroup label="Contas">${accOptions(f?.account)}</optgroup>
+        ${S.cards.length?`<optgroup label="Cartões">${S.cards.map(c=>`<option value="card:${c.id}" ${f?.card===c.id?'selected':''}>${esc(c.name)} (cartão)</option>`).join('')}</optgroup>`:''}
+      </select></div>
+    </div>
+    <div class="field"><label>Situação</label><select id="fxActive"><option value="1" ${f?.active!==false?'selected':''}>Ativo</option><option value="0" ${f?.active===false?'selected':''}>Pausado</option></select></div>
+    <div class="sheet-actions"><button class="btn ghost" id="fxCancel">Cancelar</button><button class="btn" id="fxSave">${f?'Salvar':'Adicionar'}</button></div>
+    ${f?'<button class="del" id="fxDel">Excluir gasto fixo</button>':''}
+    <p class="hint">Gastos fixos entram automaticamente como saída todo mês, no dia escolhido — o mês já começa com a previsão de gastos. Se o mesmo gasto vier depois num extrato, o app evita duplicar.</p>`);
+  $('#fxCancel').onclick=closeSheet;
+  $('#fxSave').onclick=()=>{
+    const name=$('#fxName').value.trim(); const amt=parseFloat($('#fxAmt').value);
+    if(!name||!amt){$('#fxName').focus();return;}
+    const srcRaw=$('#fxSrc').value; const isCard=srcRaw.startsWith('card:');
+    const rec={id:f?f.id:uid(),name,amount:Math.abs(amt),day:parseInt($('#fxDay').value)||1,categoryId:$('#fxCat').value,
+      account:isCard?null:srcRaw,card:isCard?srcRaw.slice(5):null,active:$('#fxActive').value==='1',since:f?f.since:ym(new Date())};
+    if(f)Object.assign(f,rec); else S.fixos.push(rec);
+    save(); materializeFixos(); closeSheet(); render();
+  };
+  if(f)$('#fxDel').onclick=()=>{ if(!confirm('Excluir este gasto fixo? Os lançamentos já gerados permanecem.'))return; S.fixos=S.fixos.filter(x=>x.id!==f.id); save(); closeSheet(); render(); };
+}
 function viewSubs(){
-  const active=S.subscriptions.filter(s=>s.active!==false);
-  const total=active.reduce((a,s)=>a+monthlyCost(s),0);
-  const yearly=total*12;
-  if(!S.subscriptions.length)return emptyBlock('Nenhuma assinatura','Cadastre Netflix, Spotify, academia, seguros… pra saber quanto do seu mês já está comprometido.');
-  const rows=[...S.subscriptions].sort((a,b)=>monthlyCost(b)-monthlyCost(a)).map(s=>{
-    const c=catById(s.categoryId);const col=c?c.color:'#888';
+  const fixos=S.fixos||[];
+  const fixosTot=fixosMensal();
+  const subsActive=S.subscriptions.filter(s=>s.active!==false);
+  const subsTot=subsActive.reduce((a,s)=>a+monthlyCost(s),0);
+  const total=fixosTot+subsTot;
+  const fixoRow=f=>{const c=catById(f.categoryId);const col=c?c.color:'#8a8a8a';
+    return `<div class="accrow" data-fixoedit="${f.id}" style="cursor:pointer">
+      <div class="swatch" style="background:${col}">${esc((f.name||'?')[0].toUpperCase())}</div>
+      <div class="mid"><div class="nm">${esc(f.name)}${f.active===false?' <span class="tag">pausado</span>':''}</div>
+        <div class="meta">todo dia ${f.day||1}${f.card?' · cartão':''}</div></div>
+      <div class="right"><div class="v num" style="color:var(--neg)">${brl(f.amount)}</div><div style="font-size:11px;color:var(--muted)">/mês</div></div>
+    </div>`;};
+  const subRow=s=>{const c=catById(s.categoryId);const col=c?c.color:'#8a8a8a';
     const freq={monthly:'mensal',yearly:'anual',weekly:'semanal'}[s.freq];
-    return `<div class="accrow" data-subedit="${s.id}">
+    return `<div class="accrow" data-subedit="${s.id}" style="cursor:pointer">
       <div class="swatch" style="background:${col}">${esc((s.name||'?')[0].toUpperCase())}</div>
-      <div class="mid"><div class="nm">${esc(s.name)} ${s.active===false?'<span class="tag">pausada</span>':''}</div>
-        <div class="meta">${brl(s.amount)} · ${freq}${s.nextDate?' · próx. '+new Intl.DateTimeFormat('pt-BR',{day:'2-digit',month:'short'}).format(parseD(s.nextDate)).replace('.',''):''}</div></div>
+      <div class="mid"><div class="nm">${esc(s.name)}${s.active===false?' <span class="tag">pausada</span>':''}</div>
+        <div class="meta">${brl(s.amount)} · ${freq}</div></div>
       <div class="right"><div class="v num">${brl(monthlyCost(s))}</div><div style="font-size:11px;color:var(--muted)">/mês</div></div>
-    </div>`;}).join('');
+    </div>`;};
+  const fixoRows=fixos.length?[...fixos].sort((a,b)=>b.amount-a.amount).map(fixoRow).join(''):emptyInline('Nenhum gasto fixo');
+  const subRows=S.subscriptions.length?[...S.subscriptions].sort((a,b)=>monthlyCost(b)-monthlyCost(a)).map(subRow).join(''):emptyInline('Nenhuma assinatura');
   return `
   <div class="subtotal"><div><div style="font-size:12px;color:var(--muted);font-weight:600">comprometido por mês</div>
-    <div style="font-size:12px;color:var(--muted);margin-top:4px">${brl(yearly)} por ano</div></div>
+    <div style="font-size:12px;color:var(--muted);margin-top:4px">${brl(total*12)} por ano</div></div>
     <div class="v num" style="color:var(--neg)">${brl(total)}</div></div>
-  <section class="card" style="padding:4px 16px"><div class="list">${rows}</div></section>
-  <button class="btn ghost block" id="addSub" style="margin-top:14px">+ Nova assinatura</button>`;
+
+  <div class="sec-h"><h2>Gastos fixos</h2><span class="sub">${brl(fixosTot)}/mês</span></div>
+  <section class="card" style="padding:4px 16px"><div class="list">${fixoRows}</div></section>
+  <button class="btn ghost block" id="addFixo" style="margin-top:12px">+ Novo gasto fixo</button>
+
+  <div class="sec-h"><h2>Assinaturas</h2><span class="sub">${brl(subsTot)}/mês</span></div>
+  <section class="card" style="padding:4px 16px"><div class="list">${subRows}</div></section>
+  <button class="btn ghost block" id="addSub" style="margin-top:12px">+ Nova assinatura</button>
+  <p class="hint" style="margin-top:14px">Gastos fixos viram saída automática todo mês. Assinaturas entram na previsão e são detectadas em faturas/extratos.</p>`;
 }
 
 /* ----- accounts & cards ----- */
@@ -676,12 +779,15 @@ function forecastData(){
   const n=ui.horizon||6;
   const base=new Date();base.setDate(1);
   const subsMonthly=S.subscriptions.filter(s=>s.active!==false).reduce((a,s)=>a+monthlyCost(s),0);
+  const fxMonthly=fixosMensal();
   const out=[];
   for(let i=0;i<n;i++){
     const d=new Date(base.getFullYear(),base.getMonth()+i,1);
     const items=S.transactions.filter(t=>t.previsto&&sameMonth(parseD(t.date),d)).sort((a,b)=>b.amount-a.amount);
     const parcelas=items.reduce((a,t)=>a+t.amount,0);
-    out.push({d,items,parcelas,assin:subsMonthly,total:parcelas+subsMonthly});
+    // o mês atual já tem os fixos lançados (contam no Saiu da Visão); projetamos só os meses futuros
+    const fixos = i===0 ? 0 : fxMonthly;
+    out.push({d,items,parcelas,assin:subsMonthly,fixos,total:parcelas+subsMonthly+fixos});
   }
   return out;
 }
@@ -696,14 +802,14 @@ function viewForecast(){
       <div class="accrow" data-fc="${key}" style="cursor:pointer">
         <div class="swatch" style="background:var(--surface-2);color:var(--muted);font-size:12px">${esc(mShort(m.d))}</div>
         <div class="mid"><div class="nm">${esc(mFull(m.d))}</div>
-          <div class="meta">parcelas ${brl(m.parcelas)} · assinaturas ${brl(m.assin)}</div></div>
+          <div class="meta">parcelas ${brl(m.parcelas)} · assin. ${brl(m.assin)}${m.fixos?' · fixos '+brl(m.fixos):''}</div></div>
         <div class="right"><div class="v num" style="color:var(--neg)">${brl(m.total)}</div>
           <div style="font-size:11px;color:var(--muted)">${open?'▲':'▼'}</div></div>
       </div>
       ${open?`<div class="list" style="padding:0 16px 8px">${m.items.length?m.items.map(txRow).join(''):'<div class="hint" style="padding:10px 2px">Sem parcelas previstas — só as assinaturas ('+brl(m.assin)+').</div>'}</div>`:''}
     </section>`;}).join('');
   return `
-  <div class="sec-h" style="margin-top:6px"><h2>Previsão de gastos</h2><span class="sub">parcelas + assinaturas</span></div>
+  <div class="sec-h" style="margin-top:6px"><h2>Previsão de gastos</h2><span class="sub">parcelas + assinaturas + fixos</span></div>
   <section class="card hero" style="padding:18px;margin-bottom:12px">
     <div class="cap">Comprometido nos próximos ${n} meses</div>
     <div class="bal num neg" style="font-size:32px">${brl(grand)}</div>
@@ -725,6 +831,7 @@ function drawForecastChart(){
   const ink=cssv('--ink'),muted=cssv('--muted'),line=cssv('--line');
   charts.fcbars=new Chart(bc,{type:'bar',data:{labels:data.map(m=>mShort(m.d)),datasets:[
     {label:'Parcelas',data:data.map(m=>m.parcelas),backgroundColor:cssv('--neg'),borderRadius:5,maxBarThickness:30,stack:'s'},
+    {label:'Fixos',data:data.map(m=>m.fixos),backgroundColor:'#D99A2B',borderRadius:5,maxBarThickness:30,stack:'s'},
     {label:'Assinaturas',data:data.map(m=>m.assin),backgroundColor:cssv('--accent'),borderRadius:5,maxBarThickness:30,stack:'s'}]},
     options:{responsive:true,maintainAspectRatio:false,
       plugins:{legend:{labels:{color:ink,boxWidth:10,boxHeight:10,usePointStyle:true,font:{family:'Inter',size:12}}},tooltip:{callbacks:{label:c=>c.dataset.label+': '+brl(c.raw)}}},
@@ -741,6 +848,7 @@ function emptyBlock(title,sub){return `<section class="card"><div class="empty">
 function wireViewEvents(){
   $$('[data-edit]').forEach(el=>el.onclick=()=>openTx(el.dataset.edit));
   $$('[data-subedit]').forEach(el=>el.onclick=()=>openSub(el.dataset.subedit));
+  $$('[data-fixoedit]').forEach(el=>el.onclick=()=>openFixo(el.dataset.fixoedit));
   $$('[data-accedit]').forEach(el=>el.onclick=()=>openAcc(el.dataset.accedit));
   $$('[data-accdetail]').forEach(el=>el.onclick=()=>openAccountDetail(el.dataset.accdetail));
   $$('[data-cardedit]').forEach(el=>el.onclick=()=>openCard(el.dataset.cardedit));
@@ -751,6 +859,7 @@ function wireViewEvents(){
   $$('[data-h]').forEach(el=>el.onclick=()=>{ui.horizon=parseInt(el.dataset.h);render();});
   $$('[data-fc]').forEach(el=>el.onclick=()=>{const k=el.dataset.fc;ui.fcOpen.has(k)?ui.fcOpen.delete(k):ui.fcOpen.add(k);render();});
   const g=$('#addSub');if(g)g.onclick=()=>openSub();
+  const gf=$('#addFixo');if(gf)gf.onclick=()=>openFixo();
   const a=$('#addAcc');if(a)a.onclick=()=>openAcc();
   const c=$('#addCard');if(c)c.onclick=()=>openCard();
   const ea=$('#emptyAdd');if(ea)ea.onclick=()=>openTx();
@@ -1217,10 +1326,12 @@ function extratoPreview(movs,banco){
     <option value="new" ${matched?'':'selected'}>+ Nova conta: ${esc(suggested)}</option>
     ${S.accounts.map(a=>`<option value="${a.id}" ${matched&&matched.id===a.id?'selected':''}>${esc(a.name)}</option>`).join('')}
   </select>`;
-  const rows=movs.map(m=>`<div class="tx" style="padding:9px 2px">
+  const isDup=m=>isDuplicate(m.valor,m.data,m.descricao,m.tipo==='entrada'?'income':'expense');
+  const dupCount=movs.filter(isDup).length;
+  const rows=movs.map(m=>{const dup=isDup(m);return `<div class="tx" style="padding:9px 2px${dup?';opacity:.45':''}">
     <div class="ic" style="background:${m.tipo==='entrada'?'var(--pos-soft)':'var(--neg-soft)'};color:${m.tipo==='entrada'?'var(--pos)':'var(--neg)'}">${m.tipo==='entrada'?'↑':'↓'}</div>
-    <div class="mid"><div class="d">${esc(m.descricao)}</div><div class="m">${m.data?new Intl.DateTimeFormat('pt-BR',{day:'2-digit',month:'short'}).format(parseD(m.data)).replace('.',''):'—'}</div></div>
-    <div class="amt num" style="color:${m.tipo==='entrada'?'var(--pos)':'var(--ink)'}">${m.tipo==='entrada'?'+':'−'} ${brl(m.valor)}</div></div>`).join('');
+    <div class="mid"><div class="d">${esc(m.descricao)}${dup?' <span class="tag">já existe</span>':''}</div><div class="m">${m.data?new Intl.DateTimeFormat('pt-BR',{day:'2-digit',month:'short'}).format(parseD(m.data)).replace('.',''):'—'}</div></div>
+    <div class="amt num" style="color:${m.tipo==='entrada'?'var(--pos)':'var(--ink)'}">${m.tipo==='entrada'?'+':'−'} ${brl(m.valor)}</div></div>`;}).join('');
   openSheet(`<h2>Extrato · ${movs.length} movimentações</h2>
     ${bankName?`<div class="callout" style="margin-bottom:12px;display:flex;align-items:center;gap:10px">${svgIcon('bank',18)}<div>Banco detectado: <b style="color:var(--ink)">${esc(bankName)}</b>${matched?' <span class="tag">já cadastrado</span>':' <span class="tag">novo</span>'}</div></div>`:''}
     <div class="field"><label>Lançar na conta</label>${accSel}</div>
@@ -1228,7 +1339,7 @@ function extratoPreview(movs,banco){
       <div style="font-size:13px;margin-top:2px"><span style="color:var(--pos)">+${brl(entrada)}</span> &nbsp; <span style="color:var(--neg)">−${brl(saida)}</span></div></div>
       <div class="v num" style="color:${entrada-saida>=0?'var(--pos)':'var(--neg)'}">${brl(entrada-saida)}</div></div>
     <div style="max-height:34vh;overflow:auto;border:1px solid var(--line);border-radius:12px;padding:2px 12px;margin-bottom:8px">${rows}</div>
-    <p class="hint">Entradas (Pix recebido, salário…) vão para "Entrou"; saídas (débito, Pix enviado, boletos) para "Saiu" — cada uma na sua data. Reimportar o mesmo extrato não duplica.</p>
+    <p class="hint">Entradas vão para "Entrou"; saídas para "Saiu" — cada uma na sua data.${dupCount?` <b style="color:var(--ink)">${dupCount} já existe(m)</b> (mesmo valor, data e nome) e será(ão) ignorado(s) para não duplicar.`:' Nada duplicado foi detectado.'}</p>
     <div class="sheet-actions"><button class="btn ghost" id="eCancel">Cancelar</button><button class="btn" id="eImport">Importar</button></div>`);
   $('#eCancel').onclick=closeSheet;
   $('#eImport').onclick=()=>applyExtrato(movs,suggested);
@@ -1246,10 +1357,13 @@ function applyExtrato(movs,suggested){
   const have=new Set(S.transactions.map(t=>t.extId).filter(Boolean));
   const slug=s=>String(s).toLowerCase().replace(/[^a-z0-9]+/g,'').slice(0,22);
   const assinCat=S.categories.find(c=>c.kind==='expense'&&c.name==='Assinaturas')?.id;
-  let n=0, subN=0;
+  const existing=S.transactions.slice(); // valida contra o que já existia antes desta importação
+  let n=0, subN=0, dupN=0;
   movs.forEach(m=>{
     const date=m.data||todayStr();
     const isIn=m.tipo==='entrada';
+    const type=isIn?'income':'expense';
+    if(isDuplicate(m.valor,date,m.descricao,type,existing)){dupN++;return;}
     let subId=null;
     if(!isIn && m.assinatura){
       const d=parseD(date);
@@ -1259,13 +1373,14 @@ function applyExtrato(movs,suggested){
     const extId=`ext:${accId}:${date}:${Math.round(m.valor*100)}:${isIn?'i':'o'}:${slug(m.descricao)}`;
     if(have.has(extId))return;
     const cat=isIn?inOther:(m.assinatura?(assinCat||outOther):(pluggyCat(m.descricao)||outOther));
-    S.transactions.push({id:uid(),extId,type:isIn?'income':'expense',amount:m.valor,desc:m.descricao,categoryId:cat,date,account:accId,card:null,subId});
+    S.transactions.push({id:uid(),extId,type,amount:m.valor,desc:m.descricao,categoryId:cat,date,account:accId,card:null,subId});
     have.add(extId);n++;
   });
   save();closeSheet();render();
   const accName=accById(accId)?.name||'conta';
   let msg=`${n} movimentação(ões) importada(s) em "${accName}".`;
-  if(subN)msg+=`\n${subN} assinatura(s) detectada(s) e adicionada(s) na aba Assinaturas.`;
+  if(dupN)msg+=`\n${dupN} ignorada(s) por já existirem.`;
+  if(subN)msg+=`\n${subN} assinatura(s) detectada(s) na aba Recorrentes.`;
   alert(msg);
 }
 
@@ -1365,8 +1480,9 @@ function applyFatura(compras,suggested,vencimento){
   const outOther=S.categories.find(c=>c.kind==='expense'&&c.name==='Outros')?.id;
   const assinCat=S.categories.find(c=>c.kind==='expense'&&c.name==='Assinaturas')?.id;
   const have=new Set(S.transactions.map(t=>t.extId).filter(Boolean));
+  const existing=S.transactions.slice();
   const slug=s=>String(s).toLowerCase().replace(/[^a-z0-9]+/g,'').slice(0,18);
-  let realN=0, prevN=0, subN=0;
+  let realN=0, prevN=0, subN=0, dupN=0;
   compras.forEach(c=>{
     const day = c.data&&/^\d{4}-\d{2}-(\d{2})/.test(c.data) ? parseInt(c.data.slice(8,10)) : 1;
     const isSub = !!c.assinatura;
@@ -1381,6 +1497,7 @@ function applyFatura(compras,suggested,vencimento){
       const previsto = off>0;
       const extId=`fat:${cardId}:${slug(c.descricao)}:${total}:${Math.round(c.valor_parcela*100)}:${ry}-${rm}:${k}`;
       if(have.has(extId))continue;
+      if(!previsto && isDuplicate(c.valor_parcela,date,c.descricao,'expense',existing)){dupN++;continue;}
       S.transactions.push({id:uid(),extId,type:'expense',amount:c.valor_parcela,
         desc:c.descricao+(total>1?` (${k}/${total})`:''),categoryId:cat,date,
         account:null,card:cardId,subId,previsto});
@@ -1390,7 +1507,8 @@ function applyFatura(compras,suggested,vencimento){
   save();closeSheet();render();
   const cardName=cardById(cardId)?.name||'cartão';
   let msg=`Importado em "${cardName}": ${realN} lançamento(s) deste mês · ${prevN} parcela(s) futura(s).`;
-  if(subN)msg+=`\n${subN} assinatura(s) detectada(s) e adicionada(s) na aba Assinaturas.`;
+  if(dupN)msg+=`\n${dupN} ignorada(s) por já existirem.`;
+  if(subN)msg+=`\n${subN} assinatura(s) detectada(s) na aba Recorrentes.`;
   alert(msg);
 }
 function importStatement(text,name){
@@ -1492,6 +1610,7 @@ $('#fab').onclick=()=>openTx();
 $('#menuBtn').onclick=openMenu;
 window.addEventListener('keydown',e=>{if(e.key==='Escape')closeSheet();});
 
+materializeFixos();
 render();
 initAuth();
 </script>
