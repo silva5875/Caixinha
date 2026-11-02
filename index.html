@@ -337,7 +337,8 @@ function seedEmpty(){
     transactions:[],
     subscriptions:[],
     fixos:[],
-    budgets:{}
+    budgets:{},
+    goals:[]
   };
 }
 function defaultCats(){
@@ -399,6 +400,10 @@ function sanitizeState(raw){
     const validCat=new Set(out.categories.map(c=>c.id));
     for(const k in raw.budgets){ if(validCat.has(k)){ const v=Math.abs(_num(raw.budgets[k])); if(v>0)out.budgets[k]=v; } }
   }
+  out.goals=(Array.isArray(raw.goals)?raw.goals:[]).slice(0,100).map(g=>({
+    id:_str(g.id,64)||uid(),name:_str(g.name,80)||'Meta',target:Math.abs(_num(g.target)),
+    saved:Math.max(0,_num(g.saved)),color:_str(g.color,16)||'#888888'
+  }));
   return out;
 }
 const catById=id=>S.categories.find(c=>c.id===id);
@@ -560,6 +565,28 @@ function viewOverview(){
       </div>`;}).filter(Boolean).join('');
     if(budRows)budget=`<div class="sec-h"><h2>Orçamento do mês</h2><button class="link" data-openbud>editar</button></div><section class="card" style="padding:6px 16px">${budRows}</section>`;
   }
+  // avisos / lembretes
+  const alerts=[];
+  const today=new Date(); today.setHours(0,0,0,0);
+  const dUntil=day=>{let d=new Date(today.getFullYear(),today.getMonth(),Math.min(day,28));if(d<today)d=new Date(today.getFullYear(),today.getMonth()+1,Math.min(day,28));return Math.round((d-today)/86400000);};
+  const emDias=dd=>dd===0?'hoje':'em '+dd+' dia'+(dd>1?'s':'');
+  S.cards.forEach(c=>{
+    if(c.closingDay){const dd=dUntil(c.closingDay);if(dd<=5)alerts.push(`Fatura do ${c.name} fecha ${emDias(dd)}.`);}
+    if(c.dueDay){const dd=dUntil(c.dueDay);if(dd<=5)alerts.push(`Fatura do ${c.name} vence ${emDias(dd)}.`);}
+  });
+  (S.subscriptions||[]).filter(s=>s.active!==false&&s.nextDate).forEach(s=>{
+    const dd=Math.round((parseD(s.nextDate)-today)/86400000);
+    if(dd>=0&&dd<=5)alerts.push(`${s.name} renova ${emDias(dd)}.`);
+  });
+  if(S.budgets&&Object.keys(S.budgets).length){
+    const mR=range('month',new Date()); const sp={};
+    S.transactions.forEach(t=>{if(t.type==='expense'&&t.categoryId){const d=parseD(t.date);if(d>=mR.start&&d<=mR.end)sp[t.categoryId]=(sp[t.categoryId]||0)+t.amount;}});
+    Object.keys(S.budgets).forEach(cid=>{const c=catById(cid);if(c&&(sp[cid]||0)>S.budgets[cid])alerts.push(`Orçamento de ${c.name} estourado.`);});
+  }
+  const alertsHtml=alerts.length?`<section class="card" style="padding:12px 14px;margin-bottom:14px;border-left:4px solid #D99A2B">
+    <div style="font-size:12px;font-weight:600;color:#D99A2B;margin-bottom:6px">Avisos</div>
+    ${alerts.slice(0,6).map(a=>`<div style="font-size:13px;padding:3px 0">${esc(a)}</div>`).join('')}
+  </section>`:'';
   return `
   <section class="card hero">
     <div class="cap" style="display:flex;align-items:center;gap:8px">Em caixa (acumulado)
@@ -574,6 +601,8 @@ function viewOverview(){
       <div class="flow out"><div class="t"><span class="dot"></span>Saiu</div><div class="v num">${brl(exp)}</div></div>
     </div>
   </section>
+
+  ${alertsHtml}
 
   ${cmp}
 
@@ -1173,6 +1202,8 @@ function openMenu(){
     <button class="menu-item" id="mImportPdf"><span class="mi">✦</span><div>Importar fatura (PDF)<small>a IA lê as compras e parcelas</small></div></button>
     <button class="menu-item" id="mCats"><span class="mi">◍</span><div>Categorias<small>${S.categories.length} cadastradas</small></div></button>
     <button class="menu-item" id="mBudgets"><span class="mi">◑</span><div>Orçamentos<small>metas de gasto por categoria</small></div></button>
+    <button class="menu-item" id="mGoals"><span class="mi">◎</span><div>Metas de economia<small>reserva, viagem, objetivos</small></div></button>
+    <button class="menu-item" id="mReport"><span class="mi">▤</span><div>Relatório do mês<small>resumo com totais e destaques</small></div></button>
     <button class="menu-item" id="mOF"><span class="mi">⇄</span><div>Open Finance<small>conectar bancos automaticamente</small></div></button>
     <button class="menu-item" id="mWipe" style="color:var(--neg)"><span class="mi">⌫</span><div>Apagar todos os dados<small>recomeçar do zero</small></div></button>
   `);
@@ -1185,7 +1216,90 @@ function openMenu(){
   $('#mOF').onclick=openOpenFinance;
   $('#mCats').onclick=openCats;
   $('#mBudgets').onclick=openBudgets;
+  $('#mGoals').onclick=openGoals;
+  $('#mReport').onclick=openReport;
   $('#mWipe').onclick=()=>{ if(confirm('Apagar tudo? Faça um backup antes se quiser guardar.')){S=seedEmpty();save();closeSheet();render();} };
+}
+function openGoals(){
+  const gs=S.goals||[];
+  const rows=gs.map(g=>{
+    const pct=g.target>0?Math.min(g.saved/g.target*100,100):0;
+    const done=g.target>0&&g.saved>=g.target;
+    return `<div class="accrow" data-goaledit="${g.id}" style="display:block;cursor:pointer">
+      <div style="display:flex;align-items:center;gap:10px">
+        <span style="width:10px;height:10px;border-radius:50%;background:${g.color};display:inline-block"></span>
+        <div class="mid"><div class="nm">${esc(g.name)}${done?' <span class="tag">concluída</span>':''}</div>
+          <div class="meta">${brl(g.saved)} de ${brl(g.target)}</div></div>
+        <div class="right"><div class="v num">${Math.round(pct)}%</div></div>
+      </div>
+      <div class="bar-mini" style="margin-top:8px"><span style="width:${pct}%;background:${g.color}"></span></div>
+    </div>`;}).join('')||emptyInline('Nenhuma meta ainda');
+  openSheet(`<h2>Metas de economia</h2>
+    <section class="card" style="padding:6px 16px">${rows}</section>
+    <button class="btn block" id="goalNew" style="margin-top:14px">+ Nova meta</button>
+    <button class="btn ghost block" id="goalBack" style="margin-top:10px">Voltar</button>`);
+  $$('[data-goaledit]').forEach(el=>el.onclick=()=>openGoal(el.dataset.goaledit));
+  $('#goalNew').onclick=()=>openGoal();
+  $('#goalBack').onclick=openMenu;
+}
+function openGoal(id){
+  const g=id?S.goals.find(x=>x.id===id):null;
+  openSheet(`<h2>${g?'Editar meta':'Nova meta'}</h2>
+    <div class="field"><label>Nome</label><input id="glName" placeholder="Ex.: Reserva de emergência" value="${g?esc(g.name):''}"></div>
+    <div class="row2">
+      <div class="field"><label>Objetivo (meta)</label><input id="glTarget" type="number" step="0.01" inputmode="decimal" value="${g?g.target:''}"></div>
+      <div class="field"><label>Já guardado</label><input id="glSaved" type="number" step="0.01" inputmode="decimal" value="${g?g.saved:0}"></div>
+    </div>
+    ${g?`<div class="field"><label>Guardar mais agora (soma ao guardado)</label><input id="glAdd" type="number" step="0.01" inputmode="decimal" placeholder="0,00"></div>`:''}
+    <div class="field"><label>Cor</label><div class="swatchpick" id="glColors"></div></div>
+    <div class="sheet-actions"><button class="btn ghost" id="glCancel">Cancelar</button><button class="btn" id="glSave">${g?'Salvar':'Adicionar'}</button></div>
+    ${g?'<button class="del" id="glDel">Excluir meta</button>':''}`);
+  let color=g?g.color:PALETTE[(S.goals.length)%PALETTE.length];
+  $('#glColors').innerHTML=PALETTE.map(x=>`<button type="button" data-c="${x}" class="${x===color?'on':''}" style="background:${x}"></button>`).join('');
+  $$('#glColors button').forEach(b=>b.onclick=()=>{color=b.dataset.c;$$('#glColors button').forEach(y=>y.classList.toggle('on',y.dataset.c===color));});
+  $('#glCancel').onclick=openGoals;
+  $('#glSave').onclick=()=>{
+    const name=$('#glName').value.trim(); if(!name){$('#glName').focus();return;}
+    let saved=Math.max(0,parseFloat($('#glSaved').value)||0);
+    const add=g?parseFloat($('#glAdd').value):0; if(add&&add>0)saved+=add;
+    const rec={id:g?g.id:uid(),name,target:Math.abs(parseFloat($('#glTarget').value)||0),saved,color};
+    if(g)Object.assign(g,rec); else S.goals.push(rec);
+    save(); openGoals();
+  };
+  if(g)$('#glDel').onclick=()=>{ if(!confirm('Excluir esta meta?'))return; S.goals=S.goals.filter(x=>x.id!==g.id); save(); openGoals(); };
+}
+function openReport(){
+  const ref=new Date(ui.ref); const r=range('month',ref);
+  const monthList=S.transactions.filter(t=>{const d=parseD(t.date);return d>=r.start&&d<=r.end;});
+  const inc=monthList.filter(t=>t.type==='income').reduce((a,t)=>a+t.amount,0);
+  const exp=monthList.filter(t=>t.type==='expense').reduce((a,t)=>a+t.amount,0);
+  const emCaixa=carriedBalance(r.start)+(inc-exp);
+  const cats=byCategory(monthList,'expense').slice(0,5);
+  const totExp=exp||1;
+  const big=[...monthList].filter(t=>t.type==='expense').sort((a,b)=>b.amount-a.amount).slice(0,5);
+  const recorrente=fixosMensal()+S.subscriptions.filter(s=>s.active!==false).reduce((a,s)=>a+monthlyCost(s),0);
+  const label=mFull(ref);
+  const catList=cats.map(c=>`<div style="display:flex;justify-content:space-between;font-size:13px;padding:5px 0"><span><span style="width:8px;height:8px;border-radius:50%;background:${c.color};display:inline-block;margin-right:6px"></span>${esc(c.name)}</span><span class="num">${brl(c.total)} · ${Math.round(c.total/totExp*100)}%</span></div>`).join('')||'<div class="hint" style="padding:6px 0">Sem gastos no mês.</div>';
+  const bigList=big.map(t=>`<div style="display:flex;justify-content:space-between;font-size:13px;padding:5px 0"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:65%">${esc(t.desc||'(sem nome)')}</span><span class="num">${brl(t.amount)}</span></div>`).join('')||'<div class="hint" style="padding:6px 0">Sem gastos no mês.</div>';
+  openSheet(`<h2>Relatório · ${label}</h2>
+    <div class="flows" style="margin-bottom:12px">
+      <div class="flow in"><div class="t"><span class="dot"></span>Entrou</div><div class="v num">${brl(inc)}</div></div>
+      <div class="flow out"><div class="t"><span class="dot"></span>Saiu</div><div class="v num">${brl(exp)}</div></div>
+    </div>
+    <div class="subtotal"><div><div style="font-size:12px;color:var(--muted);font-weight:600">Saldo do mês</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:4px">em caixa no fim: ${brl(emCaixa)}</div></div>
+      <div class="v num" style="color:${inc-exp>=0?'var(--pos)':'var(--neg)'}">${brl(inc-exp)}</div></div>
+    <div class="sec-h" style="margin:14px 2px 4px"><h2 style="font-size:14px">Top categorias</h2></div>
+    <section class="card" style="padding:4px 14px">${catList}</section>
+    <div class="sec-h" style="margin:14px 2px 4px"><h2 style="font-size:14px">Maiores gastos</h2></div>
+    <section class="card" style="padding:4px 14px">${bigList}</section>
+    <p class="hint" style="margin-top:12px">Comprometido recorrente (fixos + assinaturas): <b style="color:var(--ink)">${brl(recorrente)}/mês</b>.</p>
+    <div class="sheet-actions" style="margin-top:8px"><button class="btn ghost" id="repCopy">Copiar resumo</button><button class="btn" id="repClose">Fechar</button></div>`);
+  $('#repClose').onclick=closeSheet;
+  $('#repCopy').onclick=()=>{
+    const txt=`Relatório ${label}\nEntrou: ${brl(inc)}\nSaiu: ${brl(exp)}\nSaldo do mês: ${brl(inc-exp)}\nEm caixa no fim: ${brl(emCaixa)}\n\nTop categorias:\n`+cats.map(c=>`- ${c.name}: ${brl(c.total)} (${Math.round(c.total/totExp*100)}%)`).join('\n')+`\n\nMaiores gastos:\n`+big.map(t=>`- ${t.desc||'(sem nome)'}: ${brl(t.amount)}`).join('\n')+`\n\nRecorrente: ${brl(recorrente)}/mês`;
+    (navigator.clipboard&&navigator.clipboard.writeText?navigator.clipboard.writeText(txt).then(()=>alert('Resumo copiado.')).catch(()=>alert('Não consegui copiar automaticamente.')):alert('Cópia não suportada neste navegador.'));
+  };
 }
 function openBudgets(){
   const exp=S.categories.filter(c=>c.kind==='expense');
