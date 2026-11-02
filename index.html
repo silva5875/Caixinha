@@ -280,7 +280,7 @@ const PALETTE=['#0b6e6e','#e07a3f','#3b7dd8','#8a4fc4','#2f9e5a','#d8475a','#c99
 /* ---------- state ---------- */
 const KEY='caixa.v1';
 let S=load();
-let ui={view:'overview',period:'month',ref:new Date(), txFilter:'all', horizon:6, fcOpen:new Set()};
+let ui={view:'overview',period:'month',ref:new Date(), txFilter:'all', txSearch:'', txCat:'all', horizon:6, fcOpen:new Set()};
 
 function load(){
   try{const raw=localStorage.getItem(KEY);if(raw)return sanitizeState(JSON.parse(raw));}catch(e){}
@@ -336,7 +336,8 @@ function seedEmpty(){
     categories:defaultCats(),
     transactions:[],
     subscriptions:[],
-    fixos:[]
+    fixos:[],
+    budgets:{}
   };
 }
 function defaultCats(){
@@ -393,6 +394,11 @@ function sanitizeState(raw){
     account:accIds.has(f.account)?f.account:null,card:cardIds.has(f.card)?f.card:null,
     active:f.active!==false,since:/^\d{4}-\d{2}$/.test(f.since||'')?f.since:null
   }));
+  out.budgets={};
+  if(raw.budgets&&typeof raw.budgets==='object'){
+    const validCat=new Set(out.categories.map(c=>c.id));
+    for(const k in raw.budgets){ if(validCat.has(k)){ const v=Math.abs(_num(raw.budgets[k])); if(v>0)out.budgets[k]=v; } }
+  }
   return out;
 }
 const catById=id=>S.categories.find(c=>c.id===id);
@@ -522,6 +528,38 @@ function viewOverview(){
   const recent=[...list].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,6);
   const hasData=list.length>0;
   const periodWord={day:'hoje',week:'na semana',month:'no mês',year:'no ano'}[ui.period];
+  // comparativo com o período anterior
+  const prevR=range(ui.period,shift(ui.period,ui.ref,-1));
+  let prevExp=0; S.transactions.forEach(t=>{if(t.type==='expense'){const d=parseD(t.date);if(d>=prevR.start&&d<=prevR.end)prevExp+=t.amount;}});
+  const dExp=prevExp>0?(exp-prevExp)/prevExp*100:null;
+  const cmp=(prevExp>0||exp>0)?`
+  <section class="card" style="padding:14px 16px;margin-bottom:14px">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <div><div style="font-size:12px;color:var(--muted);font-weight:600">Gastos vs período anterior</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px">antes: ${brl(prevExp)}</div></div>
+      <div style="text-align:right"><div class="num" style="font-weight:600;font-size:16px">${brl(exp)}</div>
+        ${dExp!=null?`<div style="font-size:12px;font-weight:600;color:${dExp>0?'var(--neg)':'var(--pos)'}">${dExp>0?'▲':'▼'} ${Math.abs(Math.round(dExp))}%</div>`:'<div style="font-size:12px;color:var(--muted)">sem base anterior</div>'}
+      </div>
+    </div>
+  </section>`:'';
+  // orçamento do mês (só na visão mensal)
+  let budget='';
+  if(ui.period==='month'&&S.budgets&&Object.keys(S.budgets).length){
+    const spentByCat={};
+    list.filter(t=>t.type==='expense'&&t.categoryId).forEach(t=>{spentByCat[t.categoryId]=(spentByCat[t.categoryId]||0)+t.amount;});
+    const budRows=Object.keys(S.budgets).map(cid=>{
+      const c=catById(cid); if(!c)return '';
+      const lim=S.budgets[cid], sp=spentByCat[cid]||0, pct=Math.min(sp/lim*100,100), over=sp>lim, near=!over&&sp>=lim*0.85;
+      const col=over?'var(--neg)':(near?'#D99A2B':c.color);
+      return `<div style="padding:9px 2px">
+        <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px">
+          <span style="font-weight:500">${esc(c.name)}</span>
+          <span class="num" style="color:${over?'var(--neg)':'var(--muted)'}">${brl(sp)} / ${brl(lim)}</span></div>
+        <div class="bar-mini"><span style="width:${pct}%;background:${col}"></span></div>
+        ${over?`<div style="font-size:11px;color:var(--neg);margin-top:4px">Estourou ${brl(sp-lim)}</div>`:(near?`<div style="font-size:11px;color:#D99A2B;margin-top:4px">Perto do limite</div>`:'')}
+      </div>`;}).filter(Boolean).join('');
+    if(budRows)budget=`<div class="sec-h"><h2>Orçamento do mês</h2><button class="link" data-openbud>editar</button></div><section class="card" style="padding:6px 16px">${budRows}</section>`;
+  }
   return `
   <section class="card hero">
     <div class="cap" style="display:flex;align-items:center;gap:8px">Em caixa (acumulado)
@@ -537,6 +575,8 @@ function viewOverview(){
     </div>
   </section>
 
+  ${cmp}
+
   ${hasData?`
   <section class="card chartcard">
     <div class="sec-h" style="margin:0 0 6px"><h2>Para onde foi</h2><span class="sub">gastos por categoria</span></div>
@@ -545,6 +585,8 @@ function viewOverview(){
     </div>
     <div class="legend" id="legend"></div>
   </section>
+
+  ${budget}
 
   <section class="card chartcard">
     <div class="sec-h" style="margin:0 0 6px"><h2>Entradas e saídas</h2><span class="sub">ao longo do período</span></div>
@@ -599,7 +641,10 @@ function viewTx(){
   let list=txInRange().sort((a,b)=>b.date.localeCompare(a.date));
   if(ui.txFilter==='income')list=list.filter(t=>t.type==='income');
   if(ui.txFilter==='expense')list=list.filter(t=>t.type==='expense');
-  const {inc,exp}=sums(txInRange());
+  if(ui.txCat&&ui.txCat!=='all')list=list.filter(t=>t.categoryId===ui.txCat);
+  const q=normName(ui.txSearch);
+  if(q)list=list.filter(t=>normName(t.desc).includes(q)||normName((catById(t.categoryId)||{}).name).includes(q));
+  const {inc,exp}=sums(list);
   // agrupa por origem (cartão / conta)
   const groups=new Map();
   list.forEach(t=>{
@@ -621,7 +666,10 @@ function viewTx(){
       </div>
       <div class="list" style="padding:0 14px">${g.items.map(txRow).join('')}</div>
     </section>`;}).join('');
+  const catOpts=`<option value="all">Todas as categorias</option>`+S.categories.map(c=>`<option value="${c.id}" ${ui.txCat===c.id?'selected':''}>${esc(c.name)}</option>`).join('');
   return `
+  <div class="field" style="margin-bottom:10px"><input id="txSearch" placeholder="Buscar por nome ou categoria…" value="${esc(ui.txSearch)}"></div>
+  <div class="field" style="margin-bottom:10px"><select id="txCat">${catOpts}</select></div>
   <div class="filters">
     <button class="chip ${ui.txFilter==='all'?'on':''}" data-filter="all">Tudo</button>
     <button class="chip ${ui.txFilter==='expense'?'on':''}" data-filter="expense">Saídas</button>
@@ -873,6 +921,11 @@ function wireViewEvents(){
   $$('[data-carddetail]').forEach(el=>el.onclick=()=>openCardDetail(el.dataset.carddetail));
   $$('[data-goto]').forEach(el=>el.onclick=()=>{ui.view=el.dataset.goto;render();});
   $$('[data-filter]').forEach(el=>el.onclick=()=>{ui.txFilter=el.dataset.filter;render();});
+  const txs=$('#txSearch');if(txs){txs.oninput=()=>{ui.txSearch=txs.value;render();};}
+  const txc=$('#txCat');if(txc){txc.onchange=()=>{ui.txCat=txc.value;render();};}
+  $$('[data-openbud]').forEach(el=>el.onclick=openBudgets);
+  // mantém o foco na busca após re-render
+  if(ui.view==='tx'&&ui.txSearch&&!scrim.classList.contains('open')){const si=$('#txSearch');if(si){si.focus();si.setSelectionRange(si.value.length,si.value.length);}}
   $$('[data-hide]').forEach(el=>el.onclick=toggleHide);
   $$('[data-h]').forEach(el=>el.onclick=()=>{ui.horizon=parseInt(el.dataset.h);render();});
   $$('[data-fc]').forEach(el=>el.onclick=()=>{const k=el.dataset.fc;ui.fcOpen.has(k)?ui.fcOpen.delete(k):ui.fcOpen.add(k);render();});
@@ -1119,6 +1172,7 @@ function openMenu(){
     <button class="menu-item" id="mImportCsv"><span class="mi">≣</span><div>Importar extrato<small>PDF (a IA lê) · ou CSV/OFX</small></div></button>
     <button class="menu-item" id="mImportPdf"><span class="mi">✦</span><div>Importar fatura (PDF)<small>a IA lê as compras e parcelas</small></div></button>
     <button class="menu-item" id="mCats"><span class="mi">◍</span><div>Categorias<small>${S.categories.length} cadastradas</small></div></button>
+    <button class="menu-item" id="mBudgets"><span class="mi">◑</span><div>Orçamentos<small>metas de gasto por categoria</small></div></button>
     <button class="menu-item" id="mOF"><span class="mi">⇄</span><div>Open Finance<small>conectar bancos automaticamente</small></div></button>
     <button class="menu-item" id="mWipe" style="color:var(--neg)"><span class="mi">⌫</span><div>Apagar todos os dados<small>recomeçar do zero</small></div></button>
   `);
@@ -1130,7 +1184,26 @@ function openMenu(){
   $('#mImportPdf').onclick=()=>pickFile('pdf');
   $('#mOF').onclick=openOpenFinance;
   $('#mCats').onclick=openCats;
+  $('#mBudgets').onclick=openBudgets;
   $('#mWipe').onclick=()=>{ if(confirm('Apagar tudo? Faça um backup antes se quiser guardar.')){S=seedEmpty();save();closeSheet();render();} };
+}
+function openBudgets(){
+  const exp=S.categories.filter(c=>c.kind==='expense');
+  const rows=exp.map(c=>`<div style="display:flex;align-items:center;gap:10px;padding:8px 2px">
+    <span style="width:10px;height:10px;border-radius:3px;background:${c.color};display:inline-block;flex-shrink:0"></span>
+    <span style="flex:1;font-size:14px">${esc(c.name)}</span>
+    <input data-bud="${c.id}" type="number" step="0.01" inputmode="decimal" placeholder="sem meta" value="${S.budgets&&S.budgets[c.id]?S.budgets[c.id]:''}" style="width:110px;text-align:right">
+  </div>`).join('');
+  openSheet(`<h2>Orçamentos do mês</h2>
+    <p class="hint" style="margin:0 0 12px">Defina um teto de gasto mensal por categoria. Deixe em branco para não ter meta. O progresso aparece na Visão.</p>
+    <div style="max-height:50vh;overflow:auto">${rows}</div>
+    <div class="sheet-actions" style="margin-top:14px"><button class="btn ghost" id="budBack">Voltar</button><button class="btn" id="budSave">Salvar</button></div>`);
+  $('#budBack').onclick=openMenu;
+  $('#budSave').onclick=()=>{
+    const b={};
+    $$('[data-bud]').forEach(inp=>{const v=parseFloat(inp.value);if(v>0)b[inp.dataset.bud]=Math.abs(v);});
+    S.budgets=b; save(); closeSheet(); render();
+  };
 }
 function openCats(){
   const row=c=>`<div class="accrow" data-catedit="${c.id}" style="cursor:pointer"><div class="swatch" style="background:${c.color};width:34px;height:34px">${esc(catIcon(c.name))}</div><div class="mid"><div class="nm">${esc(c.name)}</div></div><div class="right" style="color:var(--muted);font-size:12px">editar ›</div></div>`;
