@@ -251,10 +251,27 @@ function svgIcon(name,size=16){
     eyeOff:'<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20C5 20 1 12 1 12a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>',
     card:'<rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/>',
     bank:'<line x1="3" y1="22" x2="21" y2="22"/><line x1="6" y1="18" x2="6" y2="11"/><line x1="10" y1="18" x2="10" y2="11"/><line x1="14" y1="18" x2="14" y2="11"/><line x1="18" y1="18" x2="18" y2="11"/><polygon points="12 2 20 7 4 7"/>',
-    cloud:'<path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/>'
+    cloud:'<path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/>',
+    safe:'<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="12" cy="12" r="3.3"/><line x1="12" y1="12" x2="14.1" y2="10.3"/><line x1="7" y1="20" x2="7" y2="22"/><line x1="17" y1="20" x2="17" y2="22"/>'
   };
   return `<svg ${a}>${P[name]||''}</svg>`;
 }
+/* cor de marca aproximada de cada banco (sem usar o logo oficial) */
+function bankBrand(name){
+  const n=String(name||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+  const list=[
+    [['nubank'],'#820AD1',false],[['inter'],'#FF7A00',false],[['itau'],'#EC7000',false],
+    [['bradesco'],'#CC092F',false],[['santander'],'#EC0000',false],[['caixa'],'#0A5FAE',false],
+    [['banco do brasil'],'#F8D117',true],[['c6'],'#1E1E1E',false],[['btg'],'#0A2240',false],
+    [['picpay'],'#11C76F',false],[['mercado pago','mercadopago'],'#00A5E0',false],[['neon'],'#00A3A3',false],
+    [['original'],'#00A859',false],[['sicoob'],'#00463C',false],[['sicredi'],'#3A9B35',false],
+    [['safra'],'#0A2A4A',false],[['pagbank','pagseguro'],'#00C86F',false]
+  ];
+  for(const [keys,color,dark] of list){ if(keys.some(k=>n.includes(k))) return {color,dark}; }
+  return null;
+}
+const swBg=o=>{const b=bankBrand(o&&o.name);return b?b.color:((o&&o.color)||'#8a8a8a');};
+const swFg=o=>{const b=bankBrand(o&&o.name);return b&&b.dark?'#1a1a1a':'#ffffff';};
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const todayStr=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;};
 const parseD=s=>{const [y,m,d]=s.split('-').map(Number);return new Date(y,m-1,d);};
@@ -587,8 +604,8 @@ function viewTx(){
   const groups=new Map();
   list.forEach(t=>{
     let key,name,color,isCard=false;
-    if(t.card){const c=cardById(t.card);key='card:'+t.card;name=c?c.name:'Cartão';color=c?c.color:'#8a8a8a';isCard=true;}
-    else if(t.account){const a=accById(t.account);key='acc:'+t.account;name=a?a.name:'Conta';color=a?a.color:'#8a8a8a';}
+    if(t.card){const c=cardById(t.card);key='card:'+t.card;name=c?c.name:'Cartão';color=swBg(c);isCard=true;}
+    else if(t.account){const a=accById(t.account);key='acc:'+t.account;name=a?a.name:'Conta';color=swBg(a);}
     else{key='none';name='Sem origem';color='#8a8a8a';}
     if(!groups.has(key))groups.set(key,{name,color,isCard,items:[],out:0,inc:0});
     const g=groups.get(key);g.items.push(t);t.type==='income'?g.inc+=t.amount:g.out+=t.amount;
@@ -740,7 +757,7 @@ function viewAccounts(){
   const accRows=S.accounts.map(a=>{
     const b=accountBalance(a);const t={checking:'Conta',wallet:'Carteira',savings:'Poupança',cash:'Dinheiro'}[a.type]||'Conta';
     return `<div class="accrow" data-accdetail="${a.id}" style="cursor:pointer">
-      <div class="swatch" style="background:${a.color}">${esc((a.name||'?')[0].toUpperCase())}</div>
+      <div class="swatch" style="background:${swBg(a)};color:${swFg(a)}">${esc((a.name||'?')[0].toUpperCase())}</div>
       <div class="mid"><div class="nm">${esc(a.name)}</div><div class="meta">${t}</div></div>
       <div class="right"><div class="v num" style="color:${b>=0?'var(--ink)':'var(--neg)'}">${brl(b)}</div></div>
     </div>`;}).join('');
@@ -748,18 +765,18 @@ function viewAccounts(){
     const used=cardInvoice(c);const pct=c.limit?Math.min(used/c.limit*100,100):0;
     return `<div class="accrow" data-carddetail="${c.id}" style="display:block;cursor:pointer">
       <div style="display:flex;align-items:center;gap:12px">
-        <div class="swatch" style="background:${c.color}">▭</div>
+        <div class="swatch" style="background:${swBg(c)};color:${swFg(c)}">${esc((c.name||'?')[0].toUpperCase())}</div>
         <div class="mid"><div class="nm">${esc(c.name)}</div><div class="meta">fatura aberta · fecha dia ${c.closingDay||'—'}</div></div>
         <div class="right"><div class="v num">${brl(used)}</div><div style="font-size:11px;color:var(--muted)">de ${c.limit?brl(c.limit):'—'}</div></div>
       </div>
       <div class="bar-mini"><span class="${pct>85?'warn':''}" style="width:${pct}%"></span></div>
     </div>`;}).join('');
   return `
-  <div class="sec-h" style="margin-top:6px"><h2>Contas</h2></div>
+  <div class="sec-h" style="margin-top:6px"><h2 style="display:flex;align-items:center;gap:8px">${svgIcon('safe',18)} Contas</h2></div>
   <section class="card" style="padding:4px 16px"><div class="list">${accRows||emptyInline('Nenhuma conta')}</div></section>
   <button class="btn ghost block" id="addAcc" style="margin-top:12px">+ Nova conta</button>
 
-  <div class="sec-h"><h2>Cartões de crédito</h2></div>
+  <div class="sec-h"><h2 style="display:flex;align-items:center;gap:8px">${svgIcon('card',18)} Cartões de crédito</h2></div>
   <section class="card" style="padding:4px 16px"><div class="list">${cardRows||emptyInline('Nenhum cartão')}</div></section>
   <button class="btn ghost block" id="addCard" style="margin-top:12px">+ Novo cartão</button>
 
@@ -996,7 +1013,7 @@ function openAccountDetail(id){
   const health=inc-exp;
   openSheet(`
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
-      <div class="swatch" style="background:${a.color}">${esc((a.name||'?')[0].toUpperCase())}</div>
+      <div class="swatch" style="background:${swBg(a)};color:${swFg(a)}">${esc((a.name||'?')[0].toUpperCase())}</div>
       <div><h2 style="margin:0;font-size:18px">${esc(a.name)}</h2><div class="hint" style="margin:0">${tname}</div></div>
     </div>
     <section class="card hero" style="padding:18px;margin-bottom:12px">
@@ -1027,7 +1044,7 @@ function openCardDetail(id){
   const fmt=d=>new Intl.DateTimeFormat('pt-BR',{day:'2-digit',month:'short'}).format(d).replace('.','');
   openSheet(`
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
-      <div class="swatch" style="background:${c.color}">▭</div>
+      <div class="swatch" style="background:${swBg(c)};color:${swFg(c)}">${esc((c.name||'?')[0].toUpperCase())}</div>
       <div><h2 style="margin:0;font-size:18px">${esc(c.name)}</h2>
         <div class="hint" style="margin:0">Fatura aberta · ${fmt(start)} a ${fmt(end)}</div></div>
     </div>
