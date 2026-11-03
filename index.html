@@ -703,6 +703,7 @@ function viewOverview(){
   `;
 }
 function drawOverviewCharts(){
+  const ink=cssv('--ink'),muted=cssv('--muted'),line=cssv('--line');
   const list=txInRange().filter(t=>!t.transfer&&!(t.type==='expense'&&t.faturaOf));
   const cats=byCategory(list,'expense');
   const dc=$('#donut');
@@ -718,7 +719,6 @@ function drawOverviewCharts(){
     const bk=buckets(ui.period,ui.ref);
     const inD=[],outD=[];
     bk.forEach(b=>{let i=0,o=0;S.transactions.forEach(t=>{if(t.transfer||(t.type==='expense'&&t.faturaOf))return;const d=parseD(t.date);if(d>=b.start&&d<=b.end){t.type==='income'?i+=t.amount:o+=t.amount;}});inD.push(i);outD.push(o);});
-    const ink=cssv('--ink'),muted=cssv('--muted'),line=cssv('--line');
     charts.bars=new Chart(bc,{type:'bar',data:{labels:bk.map(b=>b.label),datasets:[
       {label:'Entrou',data:inD,backgroundColor:cssv('--pos'),borderRadius:5,maxBarThickness:26},
       {label:'Saiu',data:outD,backgroundColor:cssv('--neg'),borderRadius:5,maxBarThickness:26}]},
