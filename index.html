@@ -388,6 +388,7 @@ function sanitizeState(raw){
     if(t.paid)o.paid=true;
     if(t.faturaOf)o.faturaOf=_str(t.faturaOf,64);
     if(t.transfer)o.transfer=true;
+    if(Array.isArray(t.tags)&&t.tags.length)o.tags=t.tags.map(x=>_str(x,30)).map(x=>x.trim()).filter(Boolean).slice(0,10);
     return o;
   }).filter(t=>t.amount>0);
   out.subscriptions=(Array.isArray(raw.subscriptions)?raw.subscriptions:[]).slice(0,1000).map(s=>({
@@ -541,6 +542,16 @@ function carriedBalance(beforeDate){
   S.transactions.forEach(t=>{ if(t.card||!t.account)return; if(parseD(t.date)<beforeDate){ b += t.type==='income'? t.amount : -t.amount; } });
   return b;
 }
+function networthAt(D){
+  const t0=D.getTime();
+  let cash=S.accounts.reduce((a,ac)=>a+(ac.opening||0),0), cardDebt=0, cof=0;
+  S.transactions.forEach(t=>{ const d=parseD(t.date).getTime(); if(d>t0)return;
+    if(t.card){ if(t.type==='expense')cardDebt+=t.amount; }
+    else if(t.account){ cash += t.type==='income'? t.amount : -t.amount; if(t.faturaOf)cardDebt-=t.amount; }
+  });
+  (S.cofrinho&&S.cofrinho.deposits||[]).forEach(dp=>{ if(parseD(dp.date).getTime()<=t0)cof+=dp.amount; });
+  return cash + cof - Math.max(cardDebt,0);
+}
 function viewOverview(){
   const list=txInRange();
   // visão de GASTOS: compras (cartão + conta); exclui pagamentos de fatura (quitação de dívida, não é gasto novo)
@@ -626,6 +637,20 @@ function viewOverview(){
     <div style="font-size:12px;font-weight:600;color:#D99A2B;margin-bottom:6px">Avisos</div>
     ${alerts.slice(0,6).map(a=>`<div style="font-size:13px;padding:3px 0">${esc(a)}</div>`).join('')}
   </section>`:'';
+  // saúde financeira (mês)
+  let healthHtml='';
+  if(ui.period==='month'&&inc>0){
+    const sobra=inc-exp, rate=Math.round(sobra/inc*100), gastoPct=Math.round(exp/inc*100);
+    const col=sobra>=0?'var(--pos)':'var(--neg)';
+    healthHtml=`<section class="card" style="padding:14px 16px;margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div><div style="font-size:12px;color:var(--muted);font-weight:600">Saúde do mês</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:2px">gastou ${gastoPct}% do que ganhou</div></div>
+        <div style="text-align:right"><div class="num" style="font-weight:600;color:${col}">${sobra>=0?'sobrou ':'faltou '}${brl(Math.abs(sobra))}</div>
+          <div style="font-size:12px;font-weight:600;color:${col}">poupança ${rate}%</div></div>
+      </div>
+    </section>`;
+  }
   return `
   <section class="card hero">
     <div class="cap" style="display:flex;align-items:center;gap:8px">Em caixa (acumulado)
@@ -643,6 +668,8 @@ function viewOverview(){
   </section>
 
   ${alertsHtml}
+
+  ${healthHtml}
 
   ${cmp}
 
@@ -662,6 +689,11 @@ function viewOverview(){
   <section class="card chartcard">
     <div class="sec-h" style="margin:0 0 6px"><h2>Entradas e saídas</h2><span class="sub">ao longo do período</span></div>
     <div class="barwrap"><canvas id="bars"></canvas></div>
+  </section>
+
+  <section class="card chartcard">
+    <div class="sec-h" style="margin:0 0 6px"><h2>Evolução do patrimônio</h2><span class="sub">caixa + cofrinho − a pagar</span></div>
+    <div class="barwrap"><canvas id="patrim"></canvas></div>
   </section>
 
   <div class="sec-h"><h2>Últimos lançamentos</h2><button class="link" data-goto="tx">ver todos</button></div>
@@ -693,6 +725,15 @@ function drawOverviewCharts(){
         plugins:{legend:{labels:{color:ink,boxWidth:10,boxHeight:10,usePointStyle:true,font:{family:'Inter',size:12}}},tooltip:{callbacks:{label:c=>c.dataset.label+': '+brl(c.raw)}}},
         scales:{x:{grid:{display:false},ticks:{color:muted,font:{size:11}}},y:{grid:{color:line},ticks:{color:muted,font:{size:11},callback:v=>hideVals?'':(v>=1000?(v/1000)+'k':v)}}}}});
   }
+  const pt=$('#patrim');
+  if(pt){
+    const nm=['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
+    const labels=[],vals=[]; const now=new Date();
+    for(let i=5;i>=0;i--){ const mref=new Date(now.getFullYear(),now.getMonth()-i,1); const asOf=i===0?now:new Date(mref.getFullYear(),mref.getMonth()+1,0); labels.push(nm[mref.getMonth()]); vals.push(networthAt(eod(asOf))); }
+    charts.patrim=new Chart(pt,{type:'line',data:{labels,datasets:[{label:'Patrimônio',data:vals,borderColor:cssv('--pos'),backgroundColor:'transparent',borderWidth:2,tension:.3,pointRadius:3,pointBackgroundColor:cssv('--pos')}]},
+      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>'Patrimônio: '+brl(c.raw)}}},
+        scales:{x:{grid:{display:false},ticks:{color:muted,font:{size:11}}},y:{grid:{color:line},ticks:{color:muted,font:{size:11},callback:v=>hideVals?'':(v>=1000?(v/1000)+'k':v)}}}}});
+  }
 }
 
 /* ----- transactions ----- */
@@ -704,7 +745,7 @@ function txRow(t){
   return `<div class="tx" data-edit="${t.id}" style="${t.previsto?'opacity:.62':''}">
     <div class="ic" style="background:${col}22;color:${col}">${t.previsto?'⟳':(t.type==='income'?'↑':esc(catIcon(c?.name)))}</div>
     <div class="mid"><div class="d">${esc(t.desc||(c?c.name:'Lançamento'))}${t.subId?'<span class="tag">assinatura</span>':''}${t.previsto?'<span class="tag">previsto</span>':''}${t.transfer?'<span class="tag">transferência</span>':''}${t.faturaOf?'<span class="tag">pagto fatura</span>':''}</div>
-      <div class="m">${d} · ${esc(c?c.name:'—')} · ${esc(src||'—')}</div></div>
+      <div class="m">${d} · ${esc(c?c.name:'—')} · ${esc(src||'—')}${t.tags&&t.tags.length?' · '+t.tags.map(x=>'#'+esc(x)).join(' '):''}</div></div>
     <div class="amt num ${t.type==='income'?'in':'out'}">${t.type==='income'?'+':'−'} ${brl(t.amount)}</div>
   </div>`;
 }
@@ -714,7 +755,7 @@ function viewTx(){
   if(ui.txFilter==='expense')list=list.filter(t=>t.type==='expense');
   if(ui.txCat&&ui.txCat!=='all')list=list.filter(t=>t.categoryId===ui.txCat);
   const q=normName(ui.txSearch);
-  if(q)list=list.filter(t=>normName(t.desc).includes(q)||normName((catById(t.categoryId)||{}).name).includes(q));
+  if(q)list=list.filter(t=>normName(t.desc).includes(q)||normName((catById(t.categoryId)||{}).name).includes(q)||(t.tags||[]).some(tg=>normName(tg).includes(q)));
   const {inc,exp}=sums(list.filter(t=>!t.transfer&&!(t.type==='expense'&&t.faturaOf)));
   // agrupa por origem (cartão / conta)
   const groups=new Map();
@@ -1151,6 +1192,7 @@ function openTx(id){
     </div>
     <div class="field"><label>Valor</label><input id="fAmt" type="number" inputmode="decimal" step="0.01" placeholder="0,00" value="${t?t.amount:''}"></div>
     <div class="field"><label>Descrição</label><input id="fDesc" placeholder="Ex.: mercado da esquina" value="${t?esc(t.desc||''):''}"></div>
+    <div class="field"><label>Tags (separe por vírgula)</label><input id="fTags" placeholder="ex.: viagem, presente" value="${t&&t.tags?esc(t.tags.join(', ')):''}"></div>
     <div class="row2">
       <div class="field"><label>Categoria</label><select id="fCat">${catOptions(type,t?.categoryId)}</select></div>
       <div class="field"><label>Data</label><input id="fDate" type="date" value="${t?t.date:todayStr()}"></div>
@@ -1169,9 +1211,10 @@ function openTx(id){
   $('#saveTx').onclick=()=>{
     const amt=parseFloat($('#fAmt').value);if(!amt||amt<=0){$('#fAmt').focus();return;}
     const srcRaw=$('#fSrc').value;const isCard=srcRaw.startsWith('card:');
+    const tags=$('#fTags').value.split(',').map(x=>x.trim()).filter(Boolean).slice(0,10);
     const rec={id:t?t.id:uid(),type:curType,amount:Math.abs(amt),desc:$('#fDesc').value.trim(),
       categoryId:$('#fCat').value,date:$('#fDate').value,
-      account:isCard?null:srcRaw,card:isCard?srcRaw.slice(5):null, subId:t?t.subId:null};
+      account:isCard?null:srcRaw,card:isCard?srcRaw.slice(5):null, subId:t?t.subId:null, tags};
     if(t){ Object.assign(t,rec); }
     else {
       const src=isCard?'card':'account';
@@ -1386,6 +1429,7 @@ function openMenu(){
       ? `<button class="menu-item" id="mLogout"><span class="mi">${svgIcon('cloud',18)}</span><div>Conectado${authUser.email?': '+esc(authUser.email):''}<small>dados sincronizados · toque para sair</small></div></button>`
       : `<button class="menu-item" id="mLogin"><span class="mi">${svgIcon('cloud',18)}</span><div>Entrar com Google<small>sincronizar seus dados na nuvem</small></div></button>`}
     <button class="menu-item" id="mExport"><span class="mi">↓</span><div>Fazer backup<small>baixa um arquivo .json com tudo</small></div></button>
+    <button class="menu-item" id="mExportCsv"><span class="mi">▦</span><div>Exportar lançamentos (CSV)<small>abrir no Excel / Sheets</small></div></button>
     <button class="menu-item" id="mImportJson"><span class="mi">↑</span><div>Restaurar backup<small>carrega um .json salvo antes</small></div></button>
     <button class="menu-item" id="mImportCsv"><span class="mi">≣</span><div>Importar extrato<small>PDF (a IA lê) · ou CSV/OFX</small></div></button>
     <button class="menu-item" id="mTransfer"><span class="mi">⇄</span><div>Transferência<small>entre contas ou para o cofrinho</small></div></button>
@@ -1401,6 +1445,7 @@ function openMenu(){
   const mL=$('#mLogin');if(mL)mL.onclick=loginGoogle;
   const mLo=$('#mLogout');if(mLo)mLo.onclick=()=>{ if(confirm('Sair da conta? Seus dados continuam salvos na nuvem e neste aparelho.'))logout(); };
   $('#mExport').onclick=exportJson;
+  $('#mExportCsv').onclick=exportCsv;
   $('#mImportJson').onclick=()=>pickFile('json');
   $('#mImportCsv').onclick=()=>pickFile('csv');
   $('#mTransfer').onclick=openTransfer;
@@ -1738,6 +1783,21 @@ function importPluggy(data){
 }
 
 /* ---------- backup / import ---------- */
+function exportCsv(){
+  const q=s=>'"'+String(s==null?'':s).replace(/"/g,'""')+'"';
+  const head=['Data','Descrição','Tipo','Valor','Categoria','Origem','Tags','Observação'];
+  const rows=[...S.transactions].sort((a,b)=>a.date.localeCompare(b.date)).map(t=>{
+    const cat=(catById(t.categoryId)||{}).name||'';
+    const origem=t.card?((cardById(t.card)||{}).name||'Cartão')+' (crédito)':((accById(t.account)||{}).name||'')+(t.account?' (conta)':'');
+    const obs=[t.previsto?'previsto':'',t.transfer?'transferência':'',t.faturaOf?'pagto fatura':'',t.fixo?'fixo':'',t.subId?'assinatura':''].filter(Boolean).join('; ');
+    return [t.date,t.desc||'',t.type==='income'?'entrada':'saída',String(t.amount).replace('.',','),cat,origem,(t.tags||[]).join(' '),obs].map(q).join(';');
+  });
+  const csv='\ufeff'+[head.map(q).join(';'),...rows].join('\r\n');
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
+  const url=URL.createObjectURL(blob);const a=document.createElement('a');
+  a.href=url;a.download=`caixa-lancamentos-${todayStr()}.csv`;a.click();URL.revokeObjectURL(url);
+  closeSheet();
+}
 function exportJson(){
   const blob=new Blob([JSON.stringify(S,null,2)],{type:'application/json'});
   const url=URL.createObjectURL(blob);const a=document.createElement('a');
