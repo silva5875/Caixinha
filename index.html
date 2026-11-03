@@ -389,6 +389,7 @@ function sanitizeState(raw){
     if(t.faturaOf)o.faturaOf=_str(t.faturaOf,64);
     if(t.transfer)o.transfer=true;
     if(Array.isArray(t.tags)&&t.tags.length)o.tags=t.tags.map(x=>_str(x,30)).map(x=>x.trim()).filter(Boolean).slice(0,10);
+    if(t.receipt)o.receipt=_str(t.receipt,200);
     return o;
   }).filter(t=>t.amount>0);
   out.subscriptions=(Array.isArray(raw.subscriptions)?raw.subscriptions:[]).slice(0,1000).map(s=>({
@@ -744,7 +745,7 @@ function txRow(t){
   const d=new Intl.DateTimeFormat('pt-BR',{day:'2-digit',month:'short'}).format(parseD(t.date)).replace('.','');
   return `<div class="tx" data-edit="${t.id}" style="${t.previsto?'opacity:.62':''}">
     <div class="ic" style="background:${col}22;color:${col}">${t.previsto?'⟳':(t.type==='income'?'↑':esc(catIcon(c?.name)))}</div>
-    <div class="mid"><div class="d">${esc(t.desc||(c?c.name:'Lançamento'))}${t.subId?'<span class="tag">assinatura</span>':''}${t.previsto?'<span class="tag">previsto</span>':''}${t.transfer?'<span class="tag">transferência</span>':''}${t.faturaOf?'<span class="tag">pagto fatura</span>':''}</div>
+    <div class="mid"><div class="d">${esc(t.desc||(c?c.name:'Lançamento'))}${t.subId?'<span class="tag">assinatura</span>':''}${t.previsto?'<span class="tag">previsto</span>':''}${t.transfer?'<span class="tag">transferência</span>':''}${t.faturaOf?'<span class="tag">pagto fatura</span>':''}${t.receipt?'<span class="tag">anexo</span>':''}</div>
       <div class="m">${d} · ${esc(c?c.name:'—')} · ${esc(src||'—')}${t.tags&&t.tags.length?' · '+t.tags.map(x=>'#'+esc(x)).join(' '):''}</div></div>
     <div class="amt num ${t.type==='income'?'in':'out'}">${t.type==='income'?'+':'−'} ${brl(t.amount)}</div>
   </div>`;
@@ -1201,10 +1202,28 @@ function openTx(id){
       <optgroup label="Contas">${accOptions(t?.account)}</optgroup>
       ${S.cards.length?`<optgroup label="Cartões">${S.cards.map(c=>`<option value="card:${c.id}" ${t?.card===c.id?'selected':''}>${esc(c.name)} (cartão)</option>`).join('')}</optgroup>`:''}
     </select></div>
+    <div class="field"><label>Comprovante</label><div id="rcpBox"></div><input type="file" accept="image/*" id="fRcpFile" style="display:none"></div>
     <div class="sheet-actions"><button class="btn ghost" id="cancel">Cancelar</button><button class="btn" id="saveTx">${t?'Salvar':'Adicionar'}</button></div>
     ${t?'<button class="del" id="delTx">Excluir lançamento</button>':''}
   `);
   let curType=type;
+  let receiptPath=t?(t.receipt||null):null;
+  const renderRcp=()=>{
+    const box=$('#rcpBox'); if(!box)return;
+    box.innerHTML = receiptPath
+      ? `<button type="button" class="btn ghost sm" id="rcpView">Ver comprovante</button> <button type="button" class="del" id="rcpDel" style="width:auto;display:inline-block;margin:0;padding:8px 12px">Remover</button>`
+      : (sb&&authUser ? `<button type="button" class="btn ghost block" id="rcpAdd">Anexar comprovante</button>` : `<div class="hint" style="margin:0">Entre com o Google (menu) para anexar comprovantes.</div>`);
+    const add=$('#rcpAdd'); if(add)add.onclick=()=>$('#fRcpFile').click();
+    const vw=$('#rcpView'); if(vw)vw.onclick=async()=>{const u=await receiptUrl(receiptPath); if(u)window.open(u,'_blank'); else alert('Não consegui abrir o comprovante.');};
+    const dl=$('#rcpDel'); if(dl)dl.onclick=()=>{ if(!confirm('Remover o comprovante?'))return; const old=receiptPath; receiptPath=null; deleteReceipt(old); renderRcp(); };
+  };
+  $('#fRcpFile').onchange=async e=>{
+    const f=e.target.files[0]; if(!f)return;
+    const box=$('#rcpBox'); box.innerHTML='<div class="hint" style="margin:0">Enviando comprovante…</div>';
+    try{ receiptPath=await uploadReceipt(f); }catch(err){ alert('Falha ao anexar: '+err.message); }
+    renderRcp();
+  };
+  renderRcp();
   const setType=k=>{curType=k;$('#tExp').className=k==='expense'?'on-out':'';$('#tInc').className=k==='income'?'on-in':'';$('#fCat').innerHTML=catOptions(k,null);};
   $('#tExp').onclick=()=>setType('expense');$('#tInc').onclick=()=>setType('income');
   $('#cancel').onclick=closeSheet;
@@ -1214,8 +1233,8 @@ function openTx(id){
     const tags=$('#fTags').value.split(',').map(x=>x.trim()).filter(Boolean).slice(0,10);
     const rec={id:t?t.id:uid(),type:curType,amount:Math.abs(amt),desc:$('#fDesc').value.trim(),
       categoryId:$('#fCat').value,date:$('#fDate').value,
-      account:isCard?null:srcRaw,card:isCard?srcRaw.slice(5):null, subId:t?t.subId:null, tags};
-    if(t){ Object.assign(t,rec); }
+      account:isCard?null:srcRaw,card:isCard?srcRaw.slice(5):null, subId:t?t.subId:null, tags, receipt:receiptPath||undefined};
+    if(t){ Object.assign(t,rec); if(!receiptPath)delete t.receipt; }
     else {
       const src=isCard?'card':'account';
       if(isDuplicate(rec.amount,rec.date,rec.desc,rec.type,S.transactions,src)){
@@ -1704,6 +1723,22 @@ const PLUGGY_WIDGET='https://cdn.pluggy.ai/pluggy-connect/v2.5.0/pluggy-connect.
 function loadOF(){try{return JSON.parse(localStorage.getItem('caixa.of'))||{};}catch(e){return{};}}
 function saveOF(o){try{localStorage.setItem('caixa.of',JSON.stringify(o));}catch(e){}}
 function ofHeaders(of){const h={'Content-Type':'application/json'};if(of.token)h['Authorization']='Bearer '+of.token;return h;}
+
+/* ---------- comprovantes (Supabase Storage) ---------- */
+async function uploadReceipt(file){
+  if(!sb||!authUser)throw new Error('Entre com o Google para anexar comprovantes.');
+  const ext=((file.name.split('.').pop()||'jpg').toLowerCase().replace(/[^a-z0-9]/g,'')||'jpg').slice(0,5);
+  const path=`${authUser.id}/${uid()}.${ext}`;
+  const {error}=await sb.storage.from('comprovantes').upload(path,file,{upsert:false,contentType:file.type||'image/jpeg'});
+  if(error)throw new Error(error.message);
+  return path;
+}
+async function receiptUrl(path){
+  if(!sb)return null;
+  const {data,error}=await sb.storage.from('comprovantes').createSignedUrl(path,3600);
+  return error?null:data.signedUrl;
+}
+async function deleteReceipt(path){ try{ if(sb&&path)await sb.storage.from('comprovantes').remove([path]); }catch(e){} }
 
 /* ---------- IA assistente ---------- */
 async function callAssistant(body){
