@@ -4,6 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0c1626">
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Caixa">
 <title>Caixa · controle de gastos</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -543,6 +548,26 @@ function carriedBalance(beforeDate){
   S.transactions.forEach(t=>{ if(t.card||!t.account)return; if(parseD(t.date)<beforeDate){ b += t.type==='income'? t.amount : -t.amount; } });
   return b;
 }
+function computeAlerts(){
+  const alerts=[];
+  const today=new Date(); today.setHours(0,0,0,0);
+  const dUntil=day=>{let d=new Date(today.getFullYear(),today.getMonth(),Math.min(day,28));if(d<today)d=new Date(today.getFullYear(),today.getMonth()+1,Math.min(day,28));return Math.round((d-today)/86400000);};
+  const emDias=dd=>dd===0?'hoje':'em '+dd+' dia'+(dd>1?'s':'');
+  S.cards.forEach(c=>{
+    if(c.closingDay){const dd=dUntil(c.closingDay);if(dd<=5)alerts.push(`Fatura do ${c.name} fecha ${emDias(dd)}.`);}
+    if(c.dueDay){const dd=dUntil(c.dueDay);if(dd<=5)alerts.push(`Fatura do ${c.name} vence ${emDias(dd)}.`);}
+  });
+  (S.subscriptions||[]).filter(s=>s.active!==false&&s.nextDate).forEach(s=>{
+    const dd=Math.round((parseD(s.nextDate)-today)/86400000);
+    if(dd>=0&&dd<=5)alerts.push(`${s.name} renova ${emDias(dd)}.`);
+  });
+  if(S.budgets&&Object.keys(S.budgets).length){
+    const mR=range('month',new Date()); const sp={};
+    S.transactions.forEach(t=>{if(t.type==='expense'&&t.categoryId&&!t.transfer&&!t.faturaOf){const d=parseD(t.date);if(d>=mR.start&&d<=mR.end)sp[t.categoryId]=(sp[t.categoryId]||0)+t.amount;}});
+    Object.keys(S.budgets).forEach(cid=>{const c=catById(cid);if(c&&(sp[cid]||0)>S.budgets[cid])alerts.push(`Orçamento de ${c.name} estourado.`);});
+  }
+  return alerts;
+}
 function networthAt(D){
   const t0=D.getTime();
   let cash=S.accounts.reduce((a,ac)=>a+(ac.opening||0),0), cardDebt=0, cof=0;
@@ -617,23 +642,7 @@ function viewOverview(){
     </section>`;
   }
   // avisos / lembretes
-  const alerts=[];
-  const today=new Date(); today.setHours(0,0,0,0);
-  const dUntil=day=>{let d=new Date(today.getFullYear(),today.getMonth(),Math.min(day,28));if(d<today)d=new Date(today.getFullYear(),today.getMonth()+1,Math.min(day,28));return Math.round((d-today)/86400000);};
-  const emDias=dd=>dd===0?'hoje':'em '+dd+' dia'+(dd>1?'s':'');
-  S.cards.forEach(c=>{
-    if(c.closingDay){const dd=dUntil(c.closingDay);if(dd<=5)alerts.push(`Fatura do ${c.name} fecha ${emDias(dd)}.`);}
-    if(c.dueDay){const dd=dUntil(c.dueDay);if(dd<=5)alerts.push(`Fatura do ${c.name} vence ${emDias(dd)}.`);}
-  });
-  (S.subscriptions||[]).filter(s=>s.active!==false&&s.nextDate).forEach(s=>{
-    const dd=Math.round((parseD(s.nextDate)-today)/86400000);
-    if(dd>=0&&dd<=5)alerts.push(`${s.name} renova ${emDias(dd)}.`);
-  });
-  if(S.budgets&&Object.keys(S.budgets).length){
-    const mR=range('month',new Date()); const sp={};
-    S.transactions.forEach(t=>{if(t.type==='expense'&&t.categoryId){const d=parseD(t.date);if(d>=mR.start&&d<=mR.end)sp[t.categoryId]=(sp[t.categoryId]||0)+t.amount;}});
-    Object.keys(S.budgets).forEach(cid=>{const c=catById(cid);if(c&&(sp[cid]||0)>S.budgets[cid])alerts.push(`Orçamento de ${c.name} estourado.`);});
-  }
+  const alerts=computeAlerts();
   const alertsHtml=alerts.length?`<section class="card" style="padding:12px 14px;margin-bottom:14px;border-left:4px solid #D99A2B">
     <div style="font-size:12px;font-weight:600;color:#D99A2B;margin-bottom:6px">Avisos</div>
     ${alerts.slice(0,6).map(a=>`<div style="font-size:13px;padding:3px 0">${esc(a)}</div>`).join('')}
@@ -1451,6 +1460,8 @@ function openMenu(){
     <button class="menu-item" id="mExportCsv"><span class="mi">▦</span><div>Exportar lançamentos (CSV)<small>abrir no Excel / Sheets</small></div></button>
     <button class="menu-item" id="mImportJson"><span class="mi">↑</span><div>Restaurar backup<small>carrega um .json salvo antes</small></div></button>
     <button class="menu-item" id="mImportCsv"><span class="mi">≣</span><div>Importar extrato<small>PDF (a IA lê) · ou CSV/OFX</small></div></button>
+    <button class="menu-item" id="mInstall"><span class="mi">⇩</span><div>Instalar app<small>ícone na tela inicial, tela cheia</small></div></button>
+    <button class="menu-item" id="mNotif"><span class="mi">◔</span><div>Ativar notificações<small>avisos de fatura e assinatura</small></div></button>
     <button class="menu-item" id="mTransfer"><span class="mi">⇄</span><div>Transferência<small>entre contas ou para o cofrinho</small></div></button>
     <button class="menu-item" id="mImportPdf"><span class="mi">✦</span><div>Importar fatura (PDF)<small>a IA lê as compras e parcelas</small></div></button>
     <button class="menu-item" id="mCats"><span class="mi">◍</span><div>Categorias<small>${S.categories.length} cadastradas</small></div></button>
@@ -1469,6 +1480,8 @@ function openMenu(){
   $('#mExportCsv').onclick=exportCsv;
   $('#mImportJson').onclick=()=>pickFile('json');
   $('#mImportCsv').onclick=()=>pickFile('csv');
+  $('#mInstall').onclick=installApp;
+  $('#mNotif').onclick=enableNotifications;
   $('#mTransfer').onclick=openTransfer;
   $('#mImportPdf').onclick=()=>pickFile('pdf');
   $('#mOF').onclick=openOpenFinance;
@@ -2255,10 +2268,38 @@ $('#fab').onclick=()=>openTx();
 $('#menuBtn').onclick=openMenu;
 window.addEventListener('keydown',e=>{if(e.key==='Escape')closeSheet();});
 
+/* ---------- PWA: instalação, service worker, notificações ---------- */
+let deferredPrompt=null;
+window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;});
+if('serviceWorker' in navigator){ window.addEventListener('load',()=>{navigator.serviceWorker.register('/sw.js').catch(()=>{});}); }
+async function installApp(){
+  closeSheet();
+  if(deferredPrompt){ deferredPrompt.prompt(); try{await deferredPrompt.userChoice;}catch(e){} deferredPrompt=null; return; }
+  alert('Para instalar:\n\n• Android/Chrome: menu do navegador (⋮) → "Instalar app" ou "Adicionar à tela inicial".\n• iPhone/Safari: botão Compartilhar → "Adicionar à Tela de Início".');
+}
+async function enableNotifications(){
+  closeSheet();
+  if(!('Notification' in window)){ alert('Seu navegador não suporta notificações.'); return; }
+  let p=Notification.permission;
+  if(p!=='granted') p=await Notification.requestPermission();
+  if(p==='granted'){ alert('Notificações ativadas. Ao abrir o app, você será avisado sobre faturas vencendo, assinaturas renovando e orçamento estourado.'); maybeNotify(true); }
+  else alert('Permissão de notificação não concedida.');
+}
+function maybeNotify(force){
+  try{
+    if(!('Notification' in window)||Notification.permission!=='granted')return;
+    const alerts=computeAlerts(); if(!alerts.length)return;
+    if(!force){ try{ if(localStorage.getItem('caixa.notif')===todayStr())return; }catch(e){} }
+    try{localStorage.setItem('caixa.notif',todayStr());}catch(e){}
+    new Notification('Caixa — avisos',{body:alerts.slice(0,4).join('\n'),icon:'/icon-192.png'});
+  }catch(e){}
+}
+
 materializeFixos();
 materializeRenda();
 render();
 initAuth();
+setTimeout(maybeNotify,2000);
 </script>
 </body>
 </html>
