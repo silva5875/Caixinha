@@ -1439,6 +1439,8 @@ function openMenu(){
     <button class="menu-item" id="mGoals"><span class="mi">◎</span><div>Metas de economia<small>reserva, viagem, objetivos</small></div></button>
     <button class="menu-item" id="mCofrinho"><span class="mi">▣</span><div>Cofrinho<small>guardar por mês, semestre e ano</small></div></button>
     <button class="menu-item" id="mReport"><span class="mi">▤</span><div>Relatório do mês<small>resumo com totais e destaques</small></div></button>
+    <button class="menu-item" id="mAsk"><span class="mi">✦</span><div>Pergunte à IA<small>pergunte sobre seus gastos</small></div></button>
+    <button class="menu-item" id="mCatAI"><span class="mi">✦</span><div>Categorizar com IA<small>classifica lançamentos sem categoria</small></div></button>
     <button class="menu-item" id="mOF"><span class="mi">⇄</span><div>Open Finance<small>conectar bancos automaticamente</small></div></button>
     <button class="menu-item" id="mWipe" style="color:var(--neg)"><span class="mi">⌫</span><div>Apagar todos os dados<small>recomeçar do zero</small></div></button>
   `);
@@ -1456,6 +1458,8 @@ function openMenu(){
   $('#mGoals').onclick=openGoals;
   $('#mCofrinho').onclick=openCofrinho;
   $('#mReport').onclick=openReport;
+  $('#mAsk').onclick=openAskAI;
+  $('#mCatAI').onclick=categorizeAI;
   $('#mWipe').onclick=()=>{ if(confirm('Apagar tudo? Faça um backup antes se quiser guardar.')){S=seedEmpty();save();closeSheet();render();} };
 }
 function semesterRange(ref){ const d=ref||new Date(); const y=d.getFullYear(); const h=d.getMonth()<6?0:6; return {start:sod(new Date(y,h,1)),end:eod(new Date(y,h+6,0))}; }
@@ -1596,8 +1600,10 @@ function openReport(){
     <div class="sec-h" style="margin:14px 2px 4px"><h2 style="font-size:14px">Maiores gastos</h2></div>
     <section class="card" style="padding:4px 14px">${bigList}</section>
     <p class="hint" style="margin-top:12px">Comprometido recorrente (fixos + assinaturas): <b style="color:var(--ink)">${brl(recorrente)}/mês</b>.</p>
-    <div class="sheet-actions" style="margin-top:8px"><button class="btn ghost" id="repCopy">Copiar resumo</button><button class="btn" id="repClose">Fechar</button></div>`);
+    <div id="repAI" style="margin-top:12px;font-size:14px;line-height:1.55;white-space:pre-wrap"></div>
+    <div class="sheet-actions" style="margin-top:12px"><button class="btn ghost" id="repAIbtn">Resumo por IA</button><button class="btn ghost" id="repCopy">Copiar</button><button class="btn" id="repClose">Fechar</button></div>`);
   $('#repClose').onclick=closeSheet;
+  $('#repAIbtn').onclick=async()=>{ $('#repAI').textContent='Gerando resumo…'; try{const d=await callAssistant({mode:'summary',data:monthSummaryData(ref)});$('#repAI').textContent=d.text||'(sem resposta)';}catch(e){$('#repAI').textContent='Erro: '+e.message;} };
   $('#repCopy').onclick=()=>{
     const txt=`Relatório ${label}\nEntrou: ${brl(inc)}\nSaiu: ${brl(exp)}\nSaldo do mês: ${brl(inc-exp)}\nEm caixa no fim: ${brl(emCaixa)}\n\nTop categorias:\n`+cats.map(c=>`- ${c.name}: ${brl(c.total)} (${Math.round(c.total/totExp*100)}%)`).join('\n')+`\n\nMaiores gastos:\n`+big.map(t=>`- ${t.desc||'(sem nome)'}: ${brl(t.amount)}`).join('\n')+`\n\nRecorrente: ${brl(recorrente)}/mês`;
     (navigator.clipboard&&navigator.clipboard.writeText?navigator.clipboard.writeText(txt).then(()=>alert('Resumo copiado.')).catch(()=>alert('Não consegui copiar automaticamente.')):alert('Cópia não suportada neste navegador.'));
@@ -1698,6 +1704,76 @@ const PLUGGY_WIDGET='https://cdn.pluggy.ai/pluggy-connect/v2.5.0/pluggy-connect.
 function loadOF(){try{return JSON.parse(localStorage.getItem('caixa.of'))||{};}catch(e){return{};}}
 function saveOF(o){try{localStorage.setItem('caixa.of',JSON.stringify(o));}catch(e){}}
 function ofHeaders(of){const h={'Content-Type':'application/json'};if(of.token)h['Authorization']='Bearer '+of.token;return h;}
+
+/* ---------- IA assistente ---------- */
+async function callAssistant(body){
+  const of=loadOF();
+  if(!of.backend)throw new Error('Configure o servidor em Open Finance (menu) para usar a IA.');
+  const r=await fetch(of.backend.replace(/\/+$/,'')+'/api/assistant',{method:'POST',headers:ofHeaders(of),body:JSON.stringify(body)});
+  const raw=await r.text(); let d; try{d=JSON.parse(raw);}catch{d=null;}
+  if(!r.ok||!d)throw new Error((d&&d.error)||(r.status>=500?'IA ocupada, tente de novo em instantes.':'resposta inesperada ('+r.status+')'));
+  return d;
+}
+const r2=v=>Math.round((v||0)*100)/100;
+function datasetForAI(){
+  const now=new Date(); const from=new Date(now.getFullYear(),now.getMonth()-5,1);
+  const tx=S.transactions.filter(t=>!t.previsto&&!t.transfer&&!t.faturaOf&&parseD(t.date)>=from)
+    .sort((a,b)=>a.date.localeCompare(b.date)).slice(-500)
+    .map(t=>({d:t.date,desc:t.desc||'',val:r2(t.amount),tipo:t.type==='income'?'entrada':'saida',cat:(catById(t.categoryId)||{}).name||'',origem:t.card?'cartao':'conta'}));
+  return {
+    hoje:todayStr(),
+    emCaixa:r2(carriedBalance(sod(new Date(Date.now()+86400000)))),
+    contas:S.accounts.map(a=>({nome:a.name,saldo:r2(accountBalance(a))})),
+    aPagarCartoes:r2(S.cards.reduce((s,c)=>s+cardInvoice(c),0)),
+    cofrinho:r2((S.cofrinho&&S.cofrinho.deposits||[]).reduce((a,d)=>a+d.amount,0)),
+    transacoes:tx
+  };
+}
+function monthSummaryData(ref){
+  const rg=range('month',ref);
+  const ml=S.transactions.filter(t=>{const d=parseD(t.date);return d>=rg.start&&d<=rg.end;});
+  const spend=ml.filter(t=>!t.transfer&&!(t.type==='expense'&&t.faturaOf));
+  const inc=spend.filter(t=>t.type==='income').reduce((a,t)=>a+t.amount,0);
+  const exp=spend.filter(t=>t.type==='expense').reduce((a,t)=>a+t.amount,0);
+  const pr=range('month',shift('month',ref,-1)); let prevExp=0;
+  S.transactions.forEach(t=>{if(t.type==='expense'&&!t.faturaOf&&!t.transfer){const d=parseD(t.date);if(d>=pr.start&&d<=pr.end)prevExp+=t.amount;}});
+  return {mes:mFull(ref),entrou:r2(inc),saiu:r2(exp),mes_anterior_saiu:r2(prevExp),
+    taxa_poupanca_pct:inc>0?Math.round((inc-exp)/inc*100):null,
+    categorias:byCategory(spend,'expense').slice(0,8).map(c=>({cat:c.name,total:r2(c.total)}))};
+}
+function openAskAI(){
+  openSheet(`<h2>Pergunte ao seu dinheiro</h2>
+    <p class="hint" style="margin:0 0 10px">Pergunte em linguagem natural. Ex.: "quanto gastei com mercado nos últimos 3 meses?", "qual meu maior gasto em outubro?", "estou gastando mais que ganho?".</p>
+    <div class="field"><input id="aiQ" placeholder="Digite sua pergunta…"></div>
+    <div class="sheet-actions"><button class="btn ghost" id="aiClose">Fechar</button><button class="btn" id="aiGo">Perguntar</button></div>
+    <div id="aiOut" style="margin-top:14px;font-size:14px;line-height:1.55;white-space:pre-wrap"></div>`);
+  $('#aiClose').onclick=closeSheet;
+  const go=async()=>{
+    const q=$('#aiQ').value.trim(); if(!q)return;
+    $('#aiOut').textContent='Pensando…';
+    try{ const d=await callAssistant({mode:'ask',question:q,data:datasetForAI()}); $('#aiOut').textContent=d.text||'(sem resposta)'; }
+    catch(e){ $('#aiOut').textContent='Erro: '+e.message; }
+  };
+  $('#aiGo').onclick=go;
+  $('#aiQ').addEventListener('keydown',e=>{if(e.key==='Enter')go();});
+  setTimeout(()=>$('#aiQ').focus(),120);
+}
+async function categorizeAI(){
+  const outExp=S.categories.filter(c=>c.kind==='expense');
+  const alvo=S.transactions.filter(t=>t.type==='expense'&&!t.transfer&&!t.faturaOf&&(!t.categoryId||(catById(t.categoryId)||{}).name==='Outros'));
+  if(!alvo.length){alert('Não há lançamentos sem categoria (ou em "Outros") para classificar.');return;}
+  closeSheet();
+  openSheet('<div class="grip"></div><h2>Categorizando com IA…</h2><p class="hint">Analisando '+alvo.length+' lançamento(s).</p>');
+  const items=alvo.slice(0,200).map((t,i)=>({i,desc:t.desc||''}));
+  const cats=outExp.map(c=>({id:c.id,name:c.name}));
+  try{
+    const d=await callAssistant({mode:'categorize',items,categories:cats});
+    const valid=new Set(outExp.map(c=>c.id)); let n=0;
+    (d.results||[]).forEach(r=>{ const t=alvo[r.i]; if(t&&valid.has(r.categoryId)&&r.categoryId!==t.categoryId){t.categoryId=r.categoryId;n++;} });
+    save();closeSheet();render();
+    alert(n+' lançamento(s) recategorizado(s) pela IA.');
+  }catch(e){ alert('Não consegui categorizar: '+e.message); closeSheet(); }
+}
 function loadPluggyScript(){return new Promise((res,rej)=>{
   if(window.PluggyConnect)return res();
   const s=document.createElement('script');s.src=PLUGGY_WIDGET;
