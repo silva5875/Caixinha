@@ -1,4 +1,4 @@
-import { cors, authed } from "./_pluggy.js";
+import { cors, authorize } from "./_pluggy.js";
 
 // POST /api/assistant  body: { mode, ... }
 //  mode "summary": { data }            -> { text }
@@ -57,7 +57,7 @@ export default async function handler(req, res) {
   cors(req, res);
   if (req.method === "OPTIONS") return res.status(204).end();
   if (req.method !== "POST") return res.status(405).json({ error: "use POST" });
-  if (!authed(req)) return res.status(401).json({ error: "unauthorized" });
+  if (!(await authorize(req))) return res.status(401).json({ error: "unauthorized" });
   const key = process.env.GEMINI_API_KEY;
   if (!key) return res.status(500).json({ error: "GEMINI_API_KEY não configurada" });
 
