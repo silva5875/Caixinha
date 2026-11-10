@@ -301,14 +301,14 @@ function save(){ try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){} sch
 /* ---------- Supabase (login + sincronização na nuvem) ---------- */
 const SUPABASE_URL="https://vrvajpkmxwkfynsdqsut.supabase.co";
 const SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZydmFqcGtteHdrZnluc2Rxc3V0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTMzNzM1NTUsImV4cCI6MjEwODk0OTU1NX0.8fijUBUeKVaGEebjVq4VFBqoM5b6WZIknix0u53n52I";
-let sb=null, authUser=null, pushTimer=null;
+let sb=null, authUser=null, authToken=null, pushTimer=null;
 function hasData(st){ return !!(st && ((st.transactions&&st.transactions.length)||(st.subscriptions&&st.subscriptions.length)||(st.cards&&st.cards.length))); }
 function updateAuthUI(){ const el=document.getElementById('brandSub'); if(!el)return; el.textContent = authUser ? ('sincronizado · '+(authUser.email||'conta')) : 'seu dinheiro, claro'; }
 function initAuth(){
   if(!window.supabase||!SUPABASE_URL||!SUPABASE_ANON_KEY)return;
   try{ sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY); }catch(e){ sb=null; return; }
-  sb.auth.onAuthStateChange((_e,session)=>{ const u=session?.user||null; const was=authUser&&authUser.id; authUser=u; updateAuthUI(); if(u&&u.id!==was)syncPull(); });
-  sb.auth.getSession().then(({data})=>{ authUser=(data&&data.session&&data.session.user)||null; updateAuthUI(); if(authUser)syncPull(); }).catch(()=>{});
+  sb.auth.onAuthStateChange((_e,session)=>{ const u=session?.user||null; const was=authUser&&authUser.id; authUser=u; authToken=session?.access_token||null; updateAuthUI(); if(u&&u.id!==was)syncPull(); });
+  sb.auth.getSession().then(({data})=>{ authUser=(data&&data.session&&data.session.user)||null; authToken=(data&&data.session&&data.session.access_token)||null; updateAuthUI(); if(authUser)syncPull(); }).catch(()=>{});
 }
 async function loginGoogle(){
   if(!sb){ alert('A sincronização só funciona no seu domínio (caixinha-delta.vercel.app), não na pré-visualização.'); return; }
@@ -1727,19 +1727,17 @@ function openOpenFinance(){
   const of=loadOF();
   const last=of.lastSync?new Intl.DateTimeFormat('pt-BR',{dateStyle:'short',timeStyle:'short'}).format(new Date(of.lastSync)):'nunca';
   openSheet(`<h2>Open Finance</h2>
-    <div class="field"><label>URL do servidor</label><input id="ofUrl" placeholder="https://seu-backend.vercel.app" value="${esc(of.backend||'')}"></div>
-    <div class="field"><label>Token do app (APP_TOKEN)</label><input id="ofTok" placeholder="o mesmo do servidor" value="${esc(of.token||'')}"></div>
+    <div class="callout" style="margin-bottom:14px;line-height:1.55">${authUser?'Tudo pronto — você está logado, não precisa configurar nada para a leitura por IA e importações.':'Entre com o Google (menu ≡) para ativar a IA e as importações. Nenhuma configuração manual é necessária.'}</div>
     <div class="field"><label>itemId (opcional — cole o do Meu Pluggy)</label><input id="ofItem" placeholder="preenche sozinho ao conectar pelo widget" value="${esc(of.itemId||'')}"></div>
-    <button class="btn ghost block" id="ofSave">Salvar configuração</button>
+    <button class="btn ghost block" id="ofSave">Salvar itemId</button>
     <div style="height:16px"></div>
     <div class="sheet-actions">
       <button class="btn ghost" id="ofConnect">Conectar banco</button>
       <button class="btn" id="ofSync">Sincronizar agora</button>
     </div>
     <p class="hint">${of.itemId?('Banco conectado · última sincronização: '+last):'Nenhum banco conectado ainda.'}</p>
-    <div class="callout" style="margin-top:12px;line-height:1.6">Precisa do backend publicado (a pasta <b>caixa-backend</b> que eu te mandei) e roda no <b>seu domínio</b> — o widget do Pluggy não carrega na pré-visualização do Claude. Passo a passo no README.</div>
   `);
-  $('#ofSave').onclick=()=>{const o=loadOF();o.backend=$('#ofUrl').value.trim();o.token=$('#ofTok').value.trim();const it=$('#ofItem').value.trim();if(it)o.itemId=it;saveOF(o);alert('Configuração salva.');};
+  $('#ofSave').onclick=()=>{const o=loadOF();const it=$('#ofItem').value.trim();if(it)o.itemId=it;saveOF(o);alert('Salvo.');};
   $('#ofConnect').onclick=connectBank;
   $('#ofSync').onclick=syncBank;
 }
@@ -1749,6 +1747,18 @@ const PLUGGY_WIDGET='https://cdn.pluggy.ai/pluggy-connect/v2.5.0/pluggy-connect.
 function loadOF(){try{return JSON.parse(localStorage.getItem('caixa.of'))||{};}catch(e){return{};}}
 function saveOF(o){try{localStorage.setItem('caixa.of',JSON.stringify(o));}catch(e){}}
 function ofHeaders(of){const h={'Content-Type':'application/json'};if(of.token)h['Authorization']='Bearer '+of.token;return h;}
+// Base do backend: mesmo domínio por padrão (sem configurar nada). of.backend só sobrescreve se definido.
+function apiBase(){ const b=(loadOF().backend||'').trim(); return b?b.replace(/\/+$/,''):location.origin; }
+// Autorização automática: usa o token da sessão do Google (Supabase); cai pro APP_TOKEN manual se existir.
+async function authHeaders(){
+  let tok=authToken;
+  if(sb){ try{ const {data}=await sb.auth.getSession(); if(data&&data.session&&data.session.access_token)tok=data.session.access_token; }catch(e){} }
+  const of=loadOF();
+  const h={'Content-Type':'application/json'};
+  if(tok||of.token)h['Authorization']='Bearer '+(tok||of.token);
+  return h;
+}
+function aiReady(){ return !!(authToken || (loadOF().token)); }
 
 /* ---------- comprovantes (Supabase Storage) ---------- */
 async function uploadReceipt(file){
@@ -1769,8 +1779,8 @@ async function deleteReceipt(path){ try{ if(sb&&path)await sb.storage.from('comp
 /* ---------- IA assistente ---------- */
 async function callAssistant(body){
   const of=loadOF();
-  if(!of.backend)throw new Error('Configure o servidor em Open Finance (menu) para usar a IA.');
-  const r=await fetch(of.backend.replace(/\/+$/,'')+'/api/assistant',{method:'POST',headers:ofHeaders(of),body:JSON.stringify(body)});
+  if(!aiReady())throw new Error('Entre com o Google (menu ≡) para usar a IA.');
+  const r=await fetch(apiBase()+'/api/assistant',{method:'POST',headers:await authHeaders(),body:JSON.stringify(body)});
   const raw=await r.text(); let d; try{d=JSON.parse(raw);}catch{d=null;}
   if(!r.ok||!d)throw new Error((d&&d.error)||(r.status>=500?'IA ocupada, tente de novo em instantes.':'resposta inesperada ('+r.status+')'));
   return d;
@@ -1844,10 +1854,10 @@ function loadPluggyScript(){return new Promise((res,rej)=>{
 });}
 async function connectBank(){
   const of=loadOF();
-  if(!of.backend){alert('Configure a URL do servidor primeiro.');return;}
+  if(!aiReady()){alert('Entre com o Google (menu ≡) primeiro.');return;}
   let token;
   try{
-    const r=await fetch(of.backend.replace(/\/+$/,'')+'/api/connect-token',{method:'POST',headers:ofHeaders(of)});
+    const r=await fetch(apiBase()+'/api/connect-token',{method:'POST',headers:await authHeaders()});
     const d=await r.json();
     if(!r.ok||!d.accessToken)throw new Error(d.error||'sem token');
     token=d.accessToken;
@@ -1863,11 +1873,12 @@ async function connectBank(){
 }
 async function syncBank(){
   const of=loadOF();
-  if(!of.backend||!of.itemId){alert('Conecte um banco primeiro.');return;}
+  if(!of.itemId){alert('Conecte um banco primeiro.');return;}
+  if(!aiReady()){alert('Entre com o Google (menu ≡) primeiro.');return;}
   let data;
   try{
-    const u=of.backend.replace(/\/+$/,'')+'/api/sync?itemId='+encodeURIComponent(of.itemId);
-    const r=await fetch(u,{headers:ofHeaders(of)});
+    const u=apiBase()+'/api/sync?itemId='+encodeURIComponent(of.itemId);
+    const r=await fetch(u,{headers:await authHeaders()});
     data=await r.json();
     if(!r.ok)throw new Error(data.error||('HTTP '+r.status));
   }catch(e){alert('Falha ao sincronizar: '+e.message);return;}
@@ -1973,12 +1984,12 @@ function findAccountByName(name){
 }
 async function importExtratoPDF(dataUrl){
   const of=loadOF();
-  if(!of.backend){alert('Configure o servidor em Open Finance primeiro (URL + token).');return;}
+  if(!aiReady()){alert('Entre com o Google (menu ≡) para a IA ler o extrato.');return;}
   const b64=(dataUrl.split(',')[1])||'';
   openSheet('<h2>Lendo o extrato…</h2><p class="hint">A IA está extraindo as movimentações. Isso leva alguns segundos.</p>');
   let data;
   try{
-    const r=await fetch(of.backend.replace(/\/+$/,'')+'/api/parse-fatura',{method:'POST',headers:ofHeaders(of),body:JSON.stringify({pdf:b64,tipo:'extrato'})});
+    const r=await fetch(apiBase()+'/api/parse-fatura',{method:'POST',headers:await authHeaders(),body:JSON.stringify({pdf:b64,tipo:'extrato'})});
     const raw=await r.text();
     try{data=JSON.parse(raw);}catch{data=null;}
     if(!r.ok||!data){const msg=data?.error||(r.status>=500?'o servidor demorou ou a IA está ocupada. Tente de novo.':'resposta inesperada do servidor ('+r.status+')');throw new Error(msg);}
@@ -2058,12 +2069,12 @@ function applyExtrato(movs,suggested){
 /* ---------- import fatura (PDF + IA) ---------- */
 async function importFaturaPDF(dataUrl){
   const of=loadOF();
-  if(!of.backend){alert('Configure o servidor em Open Finance primeiro (URL + token).');return;}
+  if(!aiReady()){alert('Entre com o Google (menu ≡) para a IA ler a fatura.');return;}
   const b64=(dataUrl.split(',')[1])||'';
   openSheet('<h2>Lendo a fatura…</h2><p class="hint">A IA está extraindo as compras. Isso leva alguns segundos.</p>');
   let data;
   try{
-    const r=await fetch(of.backend.replace(/\/+$/,'')+'/api/parse-fatura',{method:'POST',headers:ofHeaders(of),body:JSON.stringify({pdf:b64})});
+    const r=await fetch(apiBase()+'/api/parse-fatura',{method:'POST',headers:await authHeaders(),body:JSON.stringify({pdf:b64})});
     const raw=await r.text();
     try{ data=JSON.parse(raw); }catch{ data=null; }
     if(!r.ok||!data){
