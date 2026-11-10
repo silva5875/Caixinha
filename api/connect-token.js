@@ -1,11 +1,11 @@
-import { apiKey, pluggyFetch, cors, authed } from "./_pluggy.js";
+import { apiKey, pluggyFetch, cors, authorize } from "./_pluggy.js";
 
 // POST /api/connect-token
 // Issues a short-lived (30 min) connect token for the Pluggy Connect widget.
 export default async function handler(req, res) {
   cors(req, res);
   if (req.method === "OPTIONS") return res.status(204).end();
-  if (!authed(req)) return res.status(401).json({ error: "unauthorized" });
+  if (!(await authorize(req))) return res.status(401).json({ error: "unauthorized" });
 
   try {
     const key = await apiKey();
