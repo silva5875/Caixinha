@@ -1,4 +1,4 @@
-import { apiKey, pluggyFetch, cors, authed } from "./_pluggy.js";
+import { apiKey, pluggyFetch, cors, authorize } from "./_pluggy.js";
 
 // GET /api/sync?itemId=...&from=YYYY-MM-DD
 // Reads the connection's accounts and transactions and returns them normalized
@@ -6,7 +6,7 @@ import { apiKey, pluggyFetch, cors, authed } from "./_pluggy.js";
 export default async function handler(req, res) {
   cors(req, res);
   if (req.method === "OPTIONS") return res.status(204).end();
-  if (!authed(req)) return res.status(401).json({ error: "unauthorized" });
+  if (!(await authorize(req))) return res.status(401).json({ error: "unauthorized" });
 
   const itemId = req.query.itemId;
   if (!itemId) return res.status(400).json({ error: "itemId obrigatório" });
