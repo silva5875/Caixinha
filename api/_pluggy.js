@@ -40,11 +40,28 @@ export function cors(req, res) {
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
 }
 
-// Simple shared-secret gate so only your app can call these endpoints.
-// Set APP_TOKEN in the environment and in the app's Open Finance settings.
+// Gate antigo por token fixo (mantido por compatibilidade).
 export function authed(req) {
   const need = process.env.APP_TOKEN;
-  if (!need) return true; // no token configured -> open (fine for quick tests only)
+  if (!need) return true;
   const h = req.headers["authorization"] || "";
   return h === `Bearer ${need}`;
+}
+
+// Autorização automática: aceita o APP_TOKEN (dono) OU um token de sessão válido
+// do Supabase (qualquer usuário logado com Google no seu projeto). Assim um amigo
+// só precisa entrar com o Google — nada de configurar token na mão.
+export async function authorize(req) {
+  const h = req.headers["authorization"] || "";
+  const tok = h.startsWith("Bearer ") ? h.slice(7) : "";
+  if (!tok) return false;
+  if (process.env.APP_TOKEN && tok === process.env.APP_TOKEN) return true;
+  const u = process.env.SUPABASE_URL, k = process.env.SUPABASE_ANON_KEY;
+  if (!u || !k) return false;
+  try {
+    const r = await fetch(`${u}/auth/v1/user`, { headers: { apikey: k, Authorization: "Bearer " + tok } });
+    return r.ok; // 200 = token de usuário logado válido
+  } catch (e) {
+    return false;
+  }
 }
