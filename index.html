@@ -54,7 +54,7 @@ body{
 h1,h2,h3{margin:0;font-weight:600}
 button{font-family:inherit;cursor:pointer;color:inherit}
 input,select{font-family:inherit;font-size:16px}
-.app{max-width:960px;margin:0 auto;padding:0 16px 120px}
+.app{max-width:960px;margin:0 auto;padding:0 16px 130px}
 
 /* top bar */
 .topbar{display:flex;align-items:center;justify-content:space-between;padding:18px 2px 10px;position:sticky;top:env(safe-area-inset-top,0px);background:linear-gradient(var(--bg) 70%,transparent);z-index:20}
@@ -64,7 +64,12 @@ input,select{font-family:inherit;font-size:16px}
 .brand small{display:block;color:var(--muted);font-size:11px;font-weight:500;margin-top:-1px}
 .iconbtn{width:38px;height:38px;border-radius:10px;border:1px solid var(--line);background:var(--surface);display:grid;place-items:center;font-size:17px}
 .iconbtn:active{transform:scale(.95)}
-.topactions{display:flex;gap:8px}
+.topactions{display:flex;gap:6px;align-items:center}
+.topnav{display:flex;align-items:center;gap:2px;background:var(--surface-2);border:1px solid var(--line);border-radius:11px;padding:2px}
+.toplbl{border:0;background:transparent;color:var(--ink);font-weight:600;font-size:12.5px;padding:4px 4px;text-transform:capitalize;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.toptoggle{border:0;border-left:1px solid var(--line);background:transparent;color:var(--accent);font-weight:600;font-size:12px;padding:4px 8px;margin-left:2px}
+.toptoggle.on{background:var(--accent);color:var(--accent-ink);border-radius:8px;border-left:0}
+.brand small{max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 /* period bar */
 .periodbar{display:flex;flex-direction:column;gap:12px;margin:4px 0 16px}
@@ -74,8 +79,8 @@ input,select{font-family:inherit;font-size:16px}
 .navrow{display:flex;align-items:center;justify-content:space-between;background:var(--surface);border:1px solid var(--line-strong);border-radius:12px;padding:6px 8px;box-shadow:var(--shadow)}
 .navrow .lbl{font-family:"Space Grotesk";font-weight:600;font-size:16px;text-transform:capitalize}
 .navrow .today{font-size:12px;color:var(--accent);background:transparent;border:0;font-weight:600;padding:6px 8px}
-.chev{width:36px;height:36px;border:0;border-radius:9px;background:transparent;color:var(--muted);display:grid;place-items:center;font-size:18px}
-.chev:active{background:var(--surface-2)}
+.chev{width:28px;height:30px;border:0;border-radius:8px;background:transparent;color:var(--muted);display:grid;place-items:center;font-size:17px}
+.chev:active{background:var(--line)}
 
 /* cards */
 .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}
@@ -146,11 +151,13 @@ input,select{font-family:inherit;font-size:16px}
 .bar-mini span.warn{background:var(--neg)}
 
 /* bottom nav */
-.tabbar{position:fixed;left:0;right:0;bottom:0;z-index:30;background:var(--surface);border-top:1px solid var(--line);display:flex;justify-content:space-around;padding:8px 6px calc(8px + env(safe-area-inset-bottom,0px))}
-.tabbar button{flex:1;border:0;background:0;display:flex;flex-direction:column;align-items:center;gap:3px;color:var(--muted);font-size:10.5px;font-weight:600;padding:4px 0}
-.tabbar button .ti{font-size:21px;line-height:1}
+.tabbar{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(10px + env(safe-area-inset-bottom,0px));width:calc(100% - 24px);max-width:540px;z-index:30;background:var(--surface);border:1px solid var(--line);border-radius:22px;display:flex;justify-content:space-around;padding:9px 6px;box-shadow:0 10px 30px rgba(0,0,0,.22)}
+.tabbar button{flex:1;border:0;background:0;display:flex;flex-direction:column;align-items:center;gap:4px;color:var(--muted);font-size:10px;font-weight:600;padding:4px 0}
+.tabbar button .ti{line-height:0;display:grid;place-items:center}
 .tabbar button.on{color:var(--accent)}
-.fab{position:fixed;right:18px;bottom:calc(74px + env(safe-area-inset-bottom,0px));z-index:31;width:56px;height:56px;border-radius:18px;border:0;background:var(--accent);color:var(--accent-ink);font-size:28px;box-shadow:0 8px 24px rgba(11,110,110,.4);display:grid;place-items:center}
+.tabbar button.on .ti{filter:none}
+.tabbar button.on{color:var(--accent)}
+.fab{position:fixed;right:18px;bottom:calc(92px + env(safe-area-inset-bottom,0px));z-index:31;width:56px;height:56px;border-radius:18px;border:0;background:var(--accent);color:var(--accent-ink);font-size:28px;box-shadow:0 10px 26px rgba(10,20,40,.45);display:grid;place-items:center}
 .fab:active{transform:scale(.94)}
 
 /* modal */
@@ -205,26 +212,14 @@ input,select{font-family:inherit;font-size:16px}
       <div><h1>Caixa</h1><small id="brandSub">seu dinheiro, claro</small></div>
     </div>
     <div class="topactions">
+      <div class="topnav" id="topnav">
+        <button class="chev" id="prevP" aria-label="Anterior">‹</button>
+        <button class="toplbl" id="periodLblTop" title="Toque para hoje">—</button>
+        <button class="chev" id="nextP" aria-label="Próximo">›</button>
+        <button class="toptoggle" id="periodTog" title="Ver o ano inteiro">Ano</button>
+      </div>
       <button class="iconbtn" id="themeBtn" title="Tema" aria-label="Alternar tema">◐</button>
       <button class="iconbtn" id="menuBtn" title="Menu" aria-label="Menu">≡</button>
-    </div>
-  </div>
-
-  <!-- period bar (overview + transactions) -->
-  <div class="periodbar" id="periodBar">
-    <div class="seg" id="seg">
-      <button data-p="day">Dia</button>
-      <button data-p="week">Semana</button>
-      <button data-p="month" class="on">Mês</button>
-      <button data-p="year">Ano</button>
-    </div>
-    <div class="navrow">
-      <button class="chev" id="prevP" aria-label="Anterior">‹</button>
-      <div style="text-align:center">
-        <div class="lbl" id="periodLbl">—</div>
-        <button class="today" id="todayBtn">hoje</button>
-      </div>
-      <button class="chev" id="nextP" aria-label="Próximo">›</button>
     </div>
   </div>
 
@@ -233,13 +228,7 @@ input,select{font-family:inherit;font-size:16px}
 
 <button class="fab" id="fab" aria-label="Novo lançamento">+</button>
 
-<nav class="tabbar" id="tabbar">
-  <button data-v="overview" class="on"><span class="ti">◉</span>Visão</button>
-  <button data-v="tx"><span class="ti">≣</span>Lançamentos</button>
-  <button data-v="forecast"><span class="ti">↗</span>Previsão</button>
-  <button data-v="subs"><span class="ti">↻</span>Recorrentes</button>
-  <button data-v="accounts"><span class="ti">▦</span>Contas</button>
-</nav>
+<nav class="tabbar" id="tabbar"></nav>
 
 <!-- modal host -->
 <div class="scrim" id="scrim"><div class="sheet" id="sheet"></div></div>
@@ -262,7 +251,11 @@ function svgIcon(name,size=16){
     bank:'<line x1="3" y1="22" x2="21" y2="22"/><line x1="6" y1="18" x2="6" y2="11"/><line x1="10" y1="18" x2="10" y2="11"/><line x1="14" y1="18" x2="14" y2="11"/><line x1="18" y1="18" x2="18" y2="11"/><polygon points="12 2 20 7 4 7"/>',
     cloud:'<path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/>',
     safe:'<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="12" cy="12" r="3.3"/><line x1="12" y1="12" x2="14.1" y2="10.3"/><line x1="7" y1="20" x2="7" y2="22"/><line x1="17" y1="20" x2="17" y2="22"/>',
-    back:'<line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/>'
+    back:'<line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/>',
+    home:'<path d="M3 11l9-8 9 8"/><path d="M5 10v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V10"/>',
+    list:'<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.6" cy="6" r="1.1"/><circle cx="3.6" cy="12" r="1.1"/><circle cx="3.6" cy="18" r="1.1"/>',
+    chart:'<polyline points="3 17 9 11 13 15 21 7"/><polyline points="15 7 21 7 21 13"/>',
+    repeat:'<polyline points="17 2 21 6 17 10"/><path d="M3 12V9a4 4 0 0 1 4-4h14"/><polyline points="7 22 3 18 7 14"/><path d="M21 12v3a4 4 0 0 1-4 4H3"/>'
   };
   return `<svg ${a}>${P[name]||''}</svg>`;
 }
@@ -458,6 +451,13 @@ function shift(p,ref,dir){
   else r.setFullYear(r.getFullYear()+dir);
   return r;
 }
+function periodLabelShort(p,ref){
+  const r=new Date(ref);
+  if(p==='day')return new Intl.DateTimeFormat('pt-BR',{day:'2-digit',month:'short'}).format(r).replace('.','');
+  if(p==='week'){const {start,end}=range('week',r);const d=x=>new Intl.DateTimeFormat('pt-BR',{day:'2-digit'}).format(x);const mn=x=>new Intl.DateTimeFormat('pt-BR',{month:'short'}).format(x).replace('.','');return d(start)+'–'+d(end)+' '+mn(end);}
+  if(p==='month'){const s=new Intl.DateTimeFormat('pt-BR',{month:'long'}).format(r);return s.charAt(0).toUpperCase()+s.slice(1);}
+  return String(r.getFullYear());
+}
 function periodLabel(p,ref){
   const r=new Date(ref);
   if(p==='day')return new Intl.DateTimeFormat('pt-BR',{weekday:'short',day:'numeric',month:'short'}).format(r).replace('.','');
@@ -528,10 +528,11 @@ function destroyCharts(){Object.values(charts).forEach(c=>{try{c.destroy();}catc
 const cssv=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 
 function render(){
-  // period bar visibility
-  $('#periodBar').classList.toggle('hidden', !['overview','tx'].includes(ui.view));
-  $('#periodLbl').textContent=periodLabel(ui.period,ui.ref);
-  $$('#seg button').forEach(b=>b.classList.toggle('on',b.dataset.p===ui.period));
+  // seletor de período (visão + lançamentos)
+  const showPeriod=['overview','tx'].includes(ui.view);
+  $('#topnav').style.display=showPeriod?'flex':'none';
+  $('#periodLblTop').textContent=periodLabelShort(ui.period,ui.ref);
+  const tog=$('#periodTog'); if(tog){ tog.classList.toggle('on',ui.period==='year'); tog.textContent=ui.period==='year'?'Mês':'Ano'; }
   $$('#tabbar button').forEach(b=>b.classList.toggle('on',b.dataset.v===ui.view));
   destroyCharts();
   const v=$('#view');
@@ -594,6 +595,18 @@ function viewOverview(){
   const carryIn=carriedBalance(start);
   const accumulated=carryIn+cashNet;
   const aPagar=S.cards.reduce((s,c)=>s+cardInvoice(c),0);
+  // Saldo nas contas (snapshot atual) e "livre depois de pagar tudo"
+  const saldoContas=S.accounts.reduce((a,ac)=>a+accountBalance(ac),0);
+  const mNow=range('month',new Date());
+  const fixosNaoLancados=(S.fixos||[]).filter(f=>f.active!==false).reduce((s,f)=>{const k=`fixo:${f.id}:${mNow.start.getFullYear()}-${String(mNow.start.getMonth()+1).padStart(2,'0')}`;return s+(S.transactions.some(t=>t.extId===k)?0:f.amount);},0);
+  const livre=saldoContas-aPagar-fixosNaoLancados;
+  // Fluxo do período + saldo projetado até o fim do mês
+  const assinMensal=S.subscriptions.filter(s=>s.active!==false).reduce((a,s)=>a+monthlyCost(s),0);
+  let previstosMes=0; const prM=range('month',ui.ref);
+  S.transactions.forEach(t=>{if(t.previsto&&t.type==='expense'){const d=parseD(t.date);if(d>=prM.start&&d<=prM.end)previstosMes+=t.amount;}});
+  const projNet=(inc-exp)-(ui.period==='month'?(assinMensal+previstosMes+fixosNaoLancados):0);
+  const fluxoTitle=ui.period==='month'?('de '+mFull(ui.ref).split(' ')[0]):'do período';
+  const fimMes=new Intl.DateTimeFormat('pt-BR',{day:'2-digit',month:'short'}).format(prM.end).replace('.','');
   const recent=[...list].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,6);
   const hasData=list.length>0;
   const periodWord={day:'hoje',week:'na semana',month:'no mês',year:'no ano'}[ui.period];
@@ -667,19 +680,28 @@ function viewOverview(){
     </section>`;
   }
   return `
-  <section class="card hero">
-    <div class="cap" style="display:flex;align-items:center;gap:8px">Em caixa (acumulado)
+  <section class="card hero" style="padding:16px;margin-bottom:12px;cursor:pointer" data-saldocontas>
+    <div class="cap" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+      <span>Saldo nas contas</span>
       <button data-hide aria-label="Mostrar ou ocultar valores" style="border:0;background:transparent;cursor:pointer;line-height:1;padding:2px 4px;opacity:.75;color:var(--muted)">${svgIcon(hideVals?'eyeOff':'eye',16)}</button>
     </div>
-    <div class="bal num ${accumulated>=0?'pos':'neg'}">${brl(accumulated)}</div>
-    <div style="font-size:12px;color:var(--muted);margin-top:5px">
-      ${brl(carryIn)} veio de antes · ${cashNet>=0?'+':'−'} ${brl(Math.abs(cashNet))} em conta ${periodWord}
+    <div class="bal num ${saldoContas>=0?'pos':'neg'}">${brl(saldoContas)}</div>
+    <div style="font-size:12px;color:var(--pos);font-weight:500;margin-top:5px">~${brl(livre)} livres depois de pagar faturas${fixosNaoLancados?' e fixos':''}</div>
+  </section>
+
+  <section class="card hero" style="padding:16px;margin-bottom:12px;cursor:pointer" data-faturas>
+    <div class="cap">Faturas em aberto</div>
+    <div class="bal num neg" style="font-size:30px">~${brl(aPagar)}</div>
+    <div style="font-size:12px;color:var(--muted);margin-top:4px">toque para ver por cartão</div>
+  </section>
+
+  <section class="card hero" style="padding:16px;margin-bottom:14px">
+    <div class="cap">Fluxo ${fluxoTitle}</div>
+    <div class="flows" style="margin-top:10px">
+      <div class="flow in"><div class="t"><span class="dot"></span>Entradas</div><div class="v num">${brl(inc)}</div></div>
+      <div class="flow out"><div class="t"><span class="dot"></span>Saídas</div><div class="v num">${brl(exp)}</div></div>
     </div>
-    ${aPagar>0?`<div style="font-size:12px;color:var(--neg);font-weight:600;margin-top:4px">A pagar em cartões: ${brl(aPagar)}</div>`:''}
-    <div class="flows">
-      <div class="flow in"><div class="t"><span class="dot"></span>Entrou</div><div class="v num">${brl(inc)}</div></div>
-      <div class="flow out"><div class="t"><span class="dot"></span>Saiu</div><div class="v num">${brl(exp)}</div></div>
-    </div>
+    <div style="font-size:12px;color:var(--muted);margin-top:10px">${ui.period==='month'?('Saldo projetado até '+fimMes+': '):'Saldo do período: '}<b class="num" style="color:${projNet>=0?'var(--pos)':'var(--neg)'}">${brl(projNet)}</b></div>
   </section>
 
   ${alertsHtml}
@@ -1139,7 +1161,9 @@ function wireViewEvents(){
   $$('[data-openbud]').forEach(el=>el.onclick=openBudgets);
   // mantém o foco na busca após re-render
   if(ui.view==='tx'&&ui.txSearch&&!scrim.classList.contains('open')){const si=$('#txSearch');if(si){si.focus();si.setSelectionRange(si.value.length,si.value.length);}}
-  $$('[data-hide]').forEach(el=>el.onclick=toggleHide);
+  $$('[data-hide]').forEach(el=>el.onclick=(e)=>{e.stopPropagation();toggleHide();});
+  $$('[data-saldocontas]').forEach(el=>el.onclick=openSaldoContas);
+  $$('[data-faturas]').forEach(el=>el.onclick=openFaturasAbertas);
   $$('[data-h]').forEach(el=>el.onclick=()=>{ui.horizon=parseInt(el.dataset.h);render();});
   $$('[data-fc]').forEach(el=>el.onclick=()=>{const k=el.dataset.fc;ui.fcOpen.has(k)?ui.fcOpen.delete(k):ui.fcOpen.add(k);render();});
   const g=$('#addSub');if(g)g.onclick=()=>openSub();
@@ -1339,6 +1363,28 @@ function openAcc(id){
 }
 
 /* card */
+function openSaldoContas(){
+  const rows=S.accounts.map(a=>{const b=accountBalance(a);return `<div class="accrow" data-accd2="${a.id}" style="cursor:pointer"><div class="swatch" style="background:${swBg(a)};color:${swFg(a)}">${esc((a.name||'?')[0].toUpperCase())}</div><div class="mid"><div class="nm">${esc(a.name)}</div></div><div class="right"><div class="v num" style="color:${b>=0?'var(--ink)':'var(--neg)'}">${brl(b)}</div></div></div>`;}).join('')||emptyInline('Nenhuma conta');
+  const total=S.accounts.reduce((a,ac)=>a+accountBalance(ac),0);
+  const aPagar=S.cards.reduce((s,c)=>s+cardInvoice(c),0);
+  const mNow=range('month',new Date());
+  const fx=(S.fixos||[]).filter(f=>f.active!==false).reduce((s,f)=>{const k=`fixo:${f.id}:${mNow.start.getFullYear()}-${String(mNow.start.getMonth()+1).padStart(2,'0')}`;return s+(S.transactions.some(t=>t.extId===k)?0:f.amount);},0);
+  const livre=total-aPagar-fx;
+  openSheet(`<h2>Saldo nas contas</h2>
+    <div class="subtotal"><div><div style="font-size:12px;color:var(--muted);font-weight:600">total</div></div><div class="v num" style="color:${total>=0?'var(--accent)':'var(--neg)'}">${brl(total)}</div></div>
+    <section class="card" style="padding:4px 16px">${rows}</section>
+    <p class="hint" style="margin-top:12px;color:var(--pos)">~${brl(livre)} livres depois de pagar as faturas (${brl(aPagar)})${fx?' e os gastos fixos ('+brl(fx)+')':''}.</p>`);
+  $$('[data-accd2]').forEach(el=>el.onclick=()=>openAccountDetail(el.dataset.accd2));
+}
+function openFaturasAbertas(){
+  const rows=S.cards.map(c=>{const used=cardInvoice(c);return `<div class="accrow" data-cardd2="${c.id}" style="cursor:pointer"><div class="swatch" style="background:${swBg(c)};color:${swFg(c)}">${esc((c.name||'?')[0].toUpperCase())}</div><div class="mid"><div class="nm">${esc(c.name)}</div><div class="meta">fecha dia ${c.closingDay||'—'}</div></div><div class="right"><div class="v num" style="color:${used>0?'var(--neg)':'var(--muted)'}">${brl(used)}</div></div></div>`;}).join('')||emptyInline('Nenhum cartão cadastrado');
+  const total=S.cards.reduce((s,c)=>s+cardInvoice(c),0);
+  openSheet(`<h2>Faturas em aberto</h2>
+    <div class="subtotal"><div><div style="font-size:12px;color:var(--muted);font-weight:600">total a pagar</div></div><div class="v num" style="color:var(--neg)">${brl(total)}</div></div>
+    <section class="card" style="padding:4px 16px">${rows}</section>
+    <p class="hint" style="margin-top:12px">Toque num cartão para ver os lançamentos da fatura e pagá-la.</p>`);
+  $$('[data-cardd2]').forEach(el=>el.onclick=()=>openCardDetail(el.dataset.cardd2));
+}
 function openAccountDetail(id){
   const a=accById(id);if(!a)return;
   const tx=S.transactions.filter(t=>t.account===a.id);
@@ -2283,10 +2329,15 @@ $('#themeBtn').onclick=()=>{
 };
 
 /* ---------- global wiring ---------- */
-$$('#seg button').forEach(b=>b.onclick=()=>{ui.period=b.dataset.p;render();});
+$('#periodTog').onclick=()=>{ui.period=ui.period==='year'?'month':'year';render();};
 $('#prevP').onclick=()=>{ui.ref=shift(ui.period,ui.ref,-1);render();};
 $('#nextP').onclick=()=>{ui.ref=shift(ui.period,ui.ref,1);render();};
-$('#todayBtn').onclick=()=>{ui.ref=new Date();render();};
+$('#periodLblTop').onclick=()=>{ui.ref=new Date();render();};
+function renderTabbar(){
+  const tabs=[['overview','home','Visão'],['tx','list','Lançamentos'],['forecast','chart','Previsão'],['subs','repeat','Recorrentes'],['accounts','bank','Contas']];
+  document.getElementById('tabbar').innerHTML=tabs.map(([v,ic,label])=>`<button data-v="${v}" class="${ui.view===v?'on':''}"><span class="ti">${svgIcon(ic,22)}</span>${label}</button>`).join('');
+}
+renderTabbar();
 $$('#tabbar button').forEach(b=>b.onclick=()=>{ui.view=b.dataset.v;render();});
 $('#fab').onclick=()=>openTx();
 $('#menuBtn').onclick=openMenu;
