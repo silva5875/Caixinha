@@ -791,6 +791,11 @@ function txRow(t){
     <div class="amt num ${t.type==='income'?'in':'out'}">${t.type==='income'?'+':'−'} ${brl(t.amount)}</div>
   </div>`;
 }
+function eyeBtn(){
+  return `<div style="display:flex;justify-content:flex-end;margin:-2px 2px 8px">
+    <button data-hide aria-label="Mostrar ou ocultar valores" style="border:1px solid var(--line);background:var(--surface);border-radius:10px;cursor:pointer;color:var(--muted);padding:6px 8px;line-height:0">${svgIcon(hideVals?'eyeOff':'eye',16)}</button>
+  </div>`;
+}
 function viewTx(){
   let list=txInRange().sort((a,b)=>b.date.localeCompare(a.date));
   if(ui.txFilter==='income')list=list.filter(t=>t.type==='income');
@@ -822,6 +827,7 @@ function viewTx(){
     </section>`;}).join('');
   const catOpts=`<option value="all">Todas as categorias</option>`+S.categories.map(c=>`<option value="${c.id}" ${ui.txCat===c.id?'selected':''}>${esc(c.name)}</option>`).join('');
   return `
+  ${eyeBtn()}
   <div class="field" style="margin-bottom:10px"><input id="txSearch" placeholder="Buscar por nome ou categoria…" value="${esc(ui.txSearch)}"></div>
   <div class="field" style="margin-bottom:10px"><select id="txCat">${catOpts}</select></div>
   <div class="filters">
@@ -1001,6 +1007,7 @@ function viewSubs(){
   const fixoRows=fixos.length?[...fixos].sort((a,b)=>b.amount-a.amount).map(fixoRow).join(''):emptyInline('Nenhum gasto fixo');
   const subRows=S.subscriptions.length?[...S.subscriptions].sort((a,b)=>monthlyCost(b)-monthlyCost(a)).map(subRow).join(''):emptyInline('Nenhuma assinatura');
   return `
+  ${eyeBtn()}
   <div class="subtotal"><div><div style="font-size:12px;color:var(--muted);font-weight:600">por mês</div>
     <div style="font-size:12px;margin-top:4px"><span style="color:var(--pos)">+${brl(rendaTot)}</span> &nbsp; <span style="color:var(--neg)">−${brl(total)}</span></div></div>
     <div class="v num" style="color:${rendaTot-total>=0?'var(--pos)':'var(--neg)'}">${brl(rendaTot-total)}</div></div>
@@ -1039,6 +1046,7 @@ function viewAccounts(){
       <div class="bar-mini"><span class="${pct>85?'warn':''}" style="width:${pct}%"></span></div>
     </div>`;}).join('');
   return `
+  ${eyeBtn()}
   <div class="sec-h" style="margin-top:6px"><h2 style="display:flex;align-items:center;gap:8px">${svgIcon('safe',18)} Contas</h2></div>
   <section class="card" style="padding:4px 16px"><div class="list">${accRows||emptyInline('Nenhuma conta')}</div></section>
   <button class="btn ghost block" id="addAcc" style="margin-top:12px">+ Nova conta</button>
@@ -1097,6 +1105,7 @@ function viewForecast(){
       ${open?`<div class="list" style="padding:0 16px 8px">${m.items.length?m.items.map(txRow).join(''):'<div class="hint" style="padding:10px 2px">Sem parcelas previstas — só as assinaturas ('+brl(m.assin)+').</div>'}</div>`:''}
     </section>`;}).join('');
   return `
+  ${eyeBtn()}
   <div class="sec-h" style="margin-top:6px"><h2>Previsão de gastos</h2><span class="sub">parcelas + assinaturas + fixos</span></div>
   <section class="card hero" style="padding:18px;margin-bottom:12px">
     <div class="cap">Comprometido nos próximos ${n} meses</div>
