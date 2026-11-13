@@ -49,6 +49,7 @@ body{
   font-feature-settings:"tnum" 1,"cv05" 1;
   -webkit-font-smoothing:antialiased;
   padding-top:env(safe-area-inset-top,0px);
+  overflow-x:hidden;
 }
 .num{font-variant-numeric:tabular-nums}
 h1,h2,h3{margin:0;font-weight:600}
@@ -57,16 +58,17 @@ input,select{font-family:inherit;font-size:16px}
 .app{max-width:960px;margin:0 auto;padding:0 16px 130px}
 
 /* top bar */
-.topbar{display:flex;align-items:center;justify-content:space-between;padding:18px 2px 10px;position:sticky;top:env(safe-area-inset-top,0px);background:linear-gradient(var(--bg) 70%,transparent);z-index:20}
-.brand{display:flex;align-items:center;gap:10px}
+.topbar{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:18px 2px 10px;position:sticky;top:env(safe-area-inset-top,0px);background:linear-gradient(var(--bg) 70%,transparent);z-index:20}
+.brand{display:flex;align-items:center;gap:10px;min-width:0;flex:1}
+.brand>div{min-width:0}
+.brand h1{font-size:18px;letter-spacing:-.01em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .brand .mark{width:30px;height:30px;border-radius:9px;background:var(--accent);color:var(--accent-ink);display:grid;place-items:center;font-family:"Space Grotesk";font-weight:700;font-size:17px}
-.brand h1{font-size:19px;letter-spacing:-.01em}
 .brand small{display:block;color:var(--muted);font-size:11px;font-weight:500;margin-top:-1px}
 .iconbtn{width:38px;height:38px;border-radius:10px;border:1px solid var(--line);background:var(--surface);display:grid;place-items:center;font-size:17px}
 .iconbtn:active{transform:scale(.95)}
-.topactions{display:flex;gap:6px;align-items:center}
-.topnav{display:flex;align-items:center;gap:2px;background:var(--surface-2);border:1px solid var(--line);border-radius:11px;padding:2px}
-.toplbl{border:0;background:transparent;color:var(--ink);font-weight:600;font-size:12.5px;padding:4px 4px;text-transform:capitalize;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.topactions{display:flex;gap:6px;align-items:center;flex-shrink:0}
+.topnav{display:flex;align-items:center;gap:1px;background:var(--surface-2);border:1px solid var(--line);border-radius:11px;padding:2px}
+.toplbl{border:0;background:transparent;color:var(--ink);font-weight:600;font-size:12px;padding:4px 2px;text-transform:capitalize;max-width:78px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .toptoggle{border:0;border-left:1px solid var(--line);background:transparent;color:var(--accent);font-weight:600;font-size:12px;padding:4px 8px;margin-left:2px}
 .toptoggle.on{background:var(--accent);color:var(--accent-ink);border-radius:8px;border-left:0}
 .brand small{max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -151,8 +153,9 @@ input,select{font-family:inherit;font-size:16px}
 .bar-mini span.warn{background:var(--neg)}
 
 /* bottom nav */
-.tabbar{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(10px + env(safe-area-inset-bottom,0px));width:calc(100% - 24px);max-width:540px;z-index:30;background:var(--surface);border:1px solid var(--line);border-radius:22px;display:flex;justify-content:space-around;padding:9px 6px;box-shadow:0 10px 30px rgba(0,0,0,.22)}
-.tabbar button{flex:1;border:0;background:0;display:flex;flex-direction:column;align-items:center;gap:4px;color:var(--muted);font-size:10px;font-weight:600;padding:4px 0}
+.tabbar{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(10px + env(safe-area-inset-bottom,0px));width:calc(100% - 20px);max-width:520px;z-index:30;background:var(--surface);border:1px solid var(--line);border-radius:22px;display:flex;justify-content:space-between;padding:9px 4px;box-shadow:0 10px 30px rgba(0,0,0,.22)}
+.tabbar button{flex:1 1 0;min-width:0;border:0;background:0;display:flex;flex-direction:column;align-items:center;gap:4px;color:var(--muted);font-size:9.5px;font-weight:600;padding:4px 0;overflow:hidden}
+.tabbar button .tl{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tabbar button .ti{line-height:0;display:grid;place-items:center}
 .tabbar button.on{color:var(--accent)}
 .tabbar button.on .ti{filter:none}
@@ -2337,7 +2340,7 @@ $('#nextP').onclick=()=>{ui.ref=shift(ui.period,ui.ref,1);render();};
 $('#periodLblTop').onclick=()=>{ui.ref=new Date();render();};
 function renderTabbar(){
   const tabs=[['overview','home','Visão'],['tx','list','Lançamentos'],['forecast','chart','Previsão'],['subs','repeat','Recorrentes'],['accounts','bank','Contas']];
-  document.getElementById('tabbar').innerHTML=tabs.map(([v,ic,label])=>`<button data-v="${v}" class="${ui.view===v?'on':''}"><span class="ti">${svgIcon(ic,22)}</span>${label}</button>`).join('');
+  document.getElementById('tabbar').innerHTML=tabs.map(([v,ic,label])=>`<button data-v="${v}" class="${ui.view===v?'on':''}"><span class="ti">${svgIcon(ic,22)}</span><span class="tl">${label}</span></button>`).join('');
 }
 renderTabbar();
 $$('#tabbar button').forEach(b=>b.onclick=()=>{ui.view=b.dataset.v;render();});
