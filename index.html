@@ -459,13 +459,6 @@ function periodLabelShort(p,ref){
   if(p==='month'){const s=new Intl.DateTimeFormat('pt-BR',{month:'long'}).format(r);return s.charAt(0).toUpperCase()+s.slice(1);}
   return String(r.getFullYear());
 }
-function periodLabel(p,ref){
-  const r=new Date(ref);
-  if(p==='day')return new Intl.DateTimeFormat('pt-BR',{weekday:'short',day:'numeric',month:'short'}).format(r).replace('.','');
-  if(p==='week'){const {start,end}=range('week',r);const f=d=>new Intl.DateTimeFormat('pt-BR',{day:'numeric',month:'short'}).format(d).replace('.','');return `${f(start)} – ${f(end)}`;}
-  if(p==='month')return new Intl.DateTimeFormat('pt-BR',{month:'long',year:'numeric'}).format(r);
-  return String(r.getFullYear());
-}
 
 /* ---------- aggregation ---------- */
 function txInRange(list=S.transactions){
@@ -590,11 +583,7 @@ function viewOverview(){
   // visão de GASTOS: compras (cartão + conta); exclui pagamentos de fatura (quitação de dívida, não é gasto novo)
   const spendList=list.filter(t=>!t.transfer&&!(t.type==='expense'&&t.faturaOf));
   const {inc,exp}=sums(spendList);
-  const {start}=range(ui.period,ui.ref);
   // dinheiro em CAIXA: só movimentos de conta (inclui pagamento de fatura; exclui compras no cartão)
-  const cashNet=list.filter(t=>t.account&&!t.card).reduce((a,t)=>a+(t.type==='income'?t.amount:-t.amount),0);
-  const carryIn=carriedBalance(start);
-  const accumulated=carryIn+cashNet;
   const aPagar=S.cards.reduce((s,c)=>s+cardInvoice(c),0);
   // Saldo nas contas (snapshot atual) e "livre depois de pagar tudo"
   const saldoContas=S.accounts.reduce((a,ac)=>a+accountBalance(ac),0);
@@ -610,7 +599,6 @@ function viewOverview(){
   const fimMes=new Intl.DateTimeFormat('pt-BR',{day:'2-digit',month:'short'}).format(prM.end).replace('.','');
   const recent=[...list].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,6);
   const hasData=list.length>0;
-  const periodWord={day:'hoje',week:'na semana',month:'no mês',year:'no ano'}[ui.period];
   // comparativo com o período anterior
   const prevR=range(ui.period,shift(ui.period,ui.ref,-1));
   let prevExp=0; S.transactions.forEach(t=>{if(t.type==='expense'&&!t.faturaOf&&!t.transfer){const d=parseD(t.date);if(d>=prevR.start&&d<=prevR.end)prevExp+=t.amount;}});
@@ -1202,7 +1190,6 @@ scrim.onclick=e=>{if(e.target===scrim)closeSheet();};
 
 function catOptions(kind,sel){return S.categories.filter(c=>c.kind===kind).map(c=>`<option value="${c.id}" ${c.id===sel?'selected':''}>${esc(c.name)}</option>`).join('');}
 function accOptions(sel){return S.accounts.map(a=>`<option value="${a.id}" ${a.id===sel?'selected':''}>${esc(a.name)}</option>`).join('');}
-function cardOptions(sel){return S.cards.map(c=>`<option value="${c.id}" ${c.id===sel?'selected':''}>${esc(c.name)}</option>`).join('');}
 
 /* transaction */
 function openTransfer(){
