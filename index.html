@@ -1037,13 +1037,7 @@ function viewAccounts(){
 
   <div class="sec-h"><h2 style="display:flex;align-items:center;gap:8px">${svgIcon('card',18)} Cartões de crédito</h2></div>
   <section class="card" style="padding:4px 16px"><div class="list">${cardRows||emptyInline('Nenhum cartão')}</div></section>
-  <button class="btn ghost block" id="addCard" style="margin-top:12px">+ Novo cartão</button>
-
-  <div class="sec-h"><h2>Conectar banco</h2></div>
-  <section class="card chartcard"><div class="callout">
-    <b>Open Finance</b> conecta seus bancos e cartões automaticamente. Isso precisa de um serviço regulado (Pluggy, Belvo…) e de um pequeno servidor seu, por segurança — não dá pra fazer só nesta página. Enquanto isso, importe um extrato pelo menu ≡ (CSV/OFX).
-    <div style="margin-top:12px"><button class="btn sm ghost" id="ofInfo">Como ligar o Open Finance</button></div>
-  </div></section>`;
+  <button class="btn ghost block" id="addCard" style="margin-top:12px">+ Novo cartão</button>`;
 }
 
 /* ----- forecast ----- */
@@ -1171,7 +1165,6 @@ function wireViewEvents(){
   const c=$('#addCard');if(c)c.onclick=()=>openCard();
   const ea=$('#emptyAdd');if(ea)ea.onclick=()=>openTx();
   const sb=$('#seedBtn');if(sb)sb.onclick=seedDemo;
-  const of=$('#ofInfo');if(of)of.onclick=openOpenFinance;
 }
 
 /* ---------- modals ---------- */
@@ -1527,7 +1520,6 @@ function openMenu(){
     <button class="menu-item" id="mReport"><span class="mi">▤</span><div>Relatório do mês<small>resumo com totais e destaques</small></div></button>
     <button class="menu-item" id="mAsk"><span class="mi">✦</span><div>Pergunte à IA<small>pergunte sobre seus gastos</small></div></button>
     <button class="menu-item" id="mCatAI"><span class="mi">✦</span><div>Categorizar com IA<small>classifica lançamentos sem categoria</small></div></button>
-    <button class="menu-item" id="mOF"><span class="mi">⇄</span><div>Open Finance<small>conectar bancos automaticamente</small></div></button>
     <button class="menu-item" id="mWipe" style="color:var(--neg)"><span class="mi">⌫</span><div>Apagar todos os dados<small>recomeçar do zero</small></div></button>
   `);
   const mL=$('#mLogin');if(mL)mL.onclick=loginGoogle;
@@ -1540,7 +1532,6 @@ function openMenu(){
   $('#mNotif').onclick=enableNotifications;
   $('#mTransfer').onclick=openTransfer;
   $('#mImportPdf').onclick=()=>pickFile('pdf');
-  $('#mOF').onclick=openOpenFinance;
   $('#mCats').onclick=openCats;
   $('#mBudgets').onclick=openBudgets;
   $('#mGoals').onclick=openGoals;
@@ -1766,41 +1757,18 @@ function openCatEdit(id){
     save(); openCats();
   };
 }
-function openOpenFinance(){
-  const of=loadOF();
-  const last=of.lastSync?new Intl.DateTimeFormat('pt-BR',{dateStyle:'short',timeStyle:'short'}).format(new Date(of.lastSync)):'nunca';
-  openSheet(`<h2>Open Finance</h2>
-    <div class="callout" style="margin-bottom:14px;line-height:1.55">${authUser?'Tudo pronto — você está logado, não precisa configurar nada para a leitura por IA e importações.':'Entre com o Google (menu ≡) para ativar a IA e as importações. Nenhuma configuração manual é necessária.'}</div>
-    <div class="field"><label>itemId (opcional — cole o do Meu Pluggy)</label><input id="ofItem" placeholder="preenche sozinho ao conectar pelo widget" value="${esc(of.itemId||'')}"></div>
-    <button class="btn ghost block" id="ofSave">Salvar itemId</button>
-    <div style="height:16px"></div>
-    <div class="sheet-actions">
-      <button class="btn ghost" id="ofConnect">Conectar banco</button>
-      <button class="btn" id="ofSync">Sincronizar agora</button>
-    </div>
-    <p class="hint">${of.itemId?('Banco conectado · última sincronização: '+last):'Nenhum banco conectado ainda.'}</p>
-  `);
-  $('#ofSave').onclick=()=>{const o=loadOF();const it=$('#ofItem').value.trim();if(it)o.itemId=it;saveOF(o);alert('Salvo.');};
-  $('#ofConnect').onclick=connectBank;
-  $('#ofSync').onclick=syncBank;
-}
-
-/* ---------- open finance (pluggy) ---------- */
-const PLUGGY_WIDGET='https://cdn.pluggy.ai/pluggy-connect/v2.5.0/pluggy-connect.js';
-function loadOF(){try{return JSON.parse(localStorage.getItem('caixa.of'))||{};}catch(e){return{};}}
-function saveOF(o){try{localStorage.setItem('caixa.of',JSON.stringify(o));}catch(e){}}
-// Base do backend: mesmo domínio por padrão (sem configurar nada). of.backend só sobrescreve se definido.
-function apiBase(){ const b=(loadOF().backend||'').trim(); return b?b.replace(/\/+$/,''):location.origin; }
-// Autorização automática: usa o token da sessão do Google (Supabase); cai pro APP_TOKEN manual se existir.
+/* ---------- backend (IA de fatura/extrato) ---------- */
+// Base do backend: o próprio domínio do app.
+function apiBase(){ return location.origin; }
+// Autorização: token da sessão do Google (Supabase).
 async function authHeaders(){
   let tok=authToken;
   if(sb){ try{ const {data}=await sb.auth.getSession(); if(data&&data.session&&data.session.access_token)tok=data.session.access_token; }catch(e){} }
-  const of=loadOF();
   const h={'Content-Type':'application/json'};
-  if(tok||of.token)h['Authorization']='Bearer '+(tok||of.token);
+  if(tok)h['Authorization']='Bearer '+tok;
   return h;
 }
-function aiReady(){ return !!(authToken || (loadOF().token)); }
+function aiReady(){ return !!authToken; }
 
 /* ---------- comprovantes (Supabase Storage) ---------- */
 async function uploadReceipt(file){
@@ -1820,7 +1788,6 @@ async function deleteReceipt(path){ try{ if(sb&&path)await sb.storage.from('comp
 
 /* ---------- IA assistente ---------- */
 async function callAssistant(body){
-  const of=loadOF();
   if(!aiReady())throw new Error('Entre com o Google (menu ≡) para usar a IA.');
   const r=await fetch(apiBase()+'/api/assistant',{method:'POST',headers:await authHeaders(),body:JSON.stringify(body)});
   const raw=await r.text(); let d; try{d=JSON.parse(raw);}catch{d=null;}
@@ -1887,49 +1854,7 @@ async function categorizeAI(){
     alert(n+' lançamento(s) recategorizado(s) pela IA.');
   }catch(e){ alert('Não consegui categorizar: '+e.message); closeSheet(); }
 }
-function loadPluggyScript(){return new Promise((res,rej)=>{
-  if(window.PluggyConnect)return res();
-  const s=document.createElement('script');s.src=PLUGGY_WIDGET;
-  s.onload=()=>res();
-  s.onerror=()=>rej(new Error('Não consegui carregar o widget do Pluggy. Isso só funciona no seu próprio domínio.'));
-  document.head.appendChild(s);
-});}
-async function connectBank(){
-  const of=loadOF();
-  if(!aiReady()){alert('Entre com o Google (menu ≡) primeiro.');return;}
-  let token;
-  try{
-    const r=await fetch(apiBase()+'/api/connect-token',{method:'POST',headers:await authHeaders()});
-    const d=await r.json();
-    if(!r.ok||!d.accessToken)throw new Error(d.error||'sem token');
-    token=d.accessToken;
-  }catch(e){alert('Falha ao falar com o servidor: '+e.message);return;}
-  try{await loadPluggyScript();}catch(e){alert(e.message);return;}
-  closeSheet();
-  const pc=new PluggyConnect({
-    connectToken:token, includeSandbox:true,
-    onSuccess:(itemData)=>{const id=itemData&&(itemData.item?itemData.item.id:itemData.itemId);if(id){const o=loadOF();o.itemId=id;saveOF(o);syncBank();}},
-    onError:(err)=>{alert('Erro na conexão: '+((err&&err.message)||'tente de novo'));}
-  });
-  pc.init();
-}
-async function syncBank(){
-  const of=loadOF();
-  if(!of.itemId){alert('Conecte um banco primeiro.');return;}
-  if(!aiReady()){alert('Entre com o Google (menu ≡) primeiro.');return;}
-  let data;
-  try{
-    const u=apiBase()+'/api/sync?itemId='+encodeURIComponent(of.itemId);
-    const r=await fetch(u,{headers:await authHeaders()});
-    data=await r.json();
-    if(!r.ok)throw new Error(data.error||('HTTP '+r.status));
-  }catch(e){alert('Falha ao sincronizar: '+e.message);return;}
-  const n=importPluggy(data);
-  const o=loadOF();o.lastSync=new Date().toISOString();saveOF(o);
-  render();
-  alert(n.tx+' lançamentos novos · '+n.acc+' contas/cartões atualizados.');
-}
-function pluggyCat(name){
+function guessCat(name){
   if(!name)return null;
   const s=String(name).toLowerCase();
   const map=[['Mercado',['supermarket','groceries','mercado']],['Alimentação',['food','restaurant','aliment','bar','café','ifood','delivery']],
@@ -1939,37 +1864,6 @@ function pluggyCat(name){
     ['Assinaturas',['subscription','streaming','assinatura']],['Compras',['shopping','store','compra','loja','market']]];
   for(const [cat,keys] of map){if(keys.some(k=>s.includes(k)))return S.categories.find(c=>c.name===cat&&c.kind==='expense')?.id;}
   return null;
-}
-function importPluggy(data){
-  const have=new Set(S.transactions.map(t=>t.extId).filter(Boolean));
-  const accMap=new Map();
-  let accN=0;
-  (data.accounts||[]).forEach(a=>{
-    if(a.type==='CREDIT'){
-      let card=S.cards.find(c=>c.extId===a.extId);
-      if(!card){card={id:uid(),extId:a.extId,name:a.name,limit:a.limit||0,closingDay:a.closingDay||1,dueDay:a.dueDay||null,color:PALETTE[(S.cards.length+1)%PALETTE.length]};S.cards.push(card);}
-      else{card.name=a.name;if(a.limit)card.limit=a.limit;if(a.closingDay)card.closingDay=a.closingDay;if(a.dueDay)card.dueDay=a.dueDay;}
-      accMap.set(a.extId,{kind:'card',id:card.id});accN++;
-    }else{
-      let ac=S.accounts.find(x=>x.extId===a.extId);
-      if(!ac){ac={id:uid(),extId:a.extId,name:a.name,type:'checking',opening:0,reported:a.balance,color:PALETTE[S.accounts.length%PALETTE.length]};S.accounts.push(ac);}
-      else{ac.name=a.name;ac.reported=a.balance;}
-      accMap.set(a.extId,{kind:'account',id:ac.id});accN++;
-    }
-  });
-  const outOther=S.categories.find(c=>c.kind==='expense'&&c.name==='Outros')?.id;
-  const inOther=S.categories.find(c=>c.kind==='income'&&c.name==='Outros')?.id;
-  let txN=0;
-  (data.transactions||[]).forEach(t=>{
-    if(!t.extId||have.has(t.extId))return;
-    const tgt=accMap.get(t.accountExtId);
-    const catId=t.kind==='expense'?(pluggyCat(t.category)||outOther):inOther;
-    S.transactions.push({id:uid(),extId:t.extId,type:t.kind,amount:t.amount,desc:t.description,
-      categoryId:catId,date:t.date,account:tgt&&tgt.kind==='account'?tgt.id:null,card:tgt&&tgt.kind==='card'?tgt.id:null,subId:null});
-    have.add(t.extId);txN++;
-  });
-  save();
-  return{tx:txN,acc:accN};
 }
 
 /* ---------- backup / import ---------- */
@@ -2025,7 +1919,6 @@ function findAccountByName(name){
   return S.accounts.find(a=>{const an=normName(a.name);return an&&(an===n||an.includes(n)||n.includes(an));})||null;
 }
 async function importExtratoPDF(dataUrl){
-  const of=loadOF();
   if(!aiReady()){alert('Entre com o Google (menu ≡) para a IA ler o extrato.');return;}
   const b64=(dataUrl.split(',')[1])||'';
   openSheet('<h2>Lendo o extrato…</h2><p class="hint">A IA está extraindo as movimentações. Isso leva alguns segundos.</p>');
@@ -2096,7 +1989,7 @@ function applyExtrato(movs,suggested){
     }
     const extId=`ext:${accId}:${date}:${Math.round(m.valor*100)}:${isIn?'i':'o'}:${slug(m.descricao)}`;
     if(have.has(extId))return;
-    const cat=isIn?inOther:(m.assinatura?(assinCat||outOther):(pluggyCat(m.descricao)||outOther));
+    const cat=isIn?inOther:(m.assinatura?(assinCat||outOther):(guessCat(m.descricao)||outOther));
     S.transactions.push({id:uid(),extId,type,amount:m.valor,desc:m.descricao,categoryId:cat,date,account:accId,card:null,subId});
     have.add(extId);n++;
   });
@@ -2110,7 +2003,6 @@ function applyExtrato(movs,suggested){
 
 /* ---------- import fatura (PDF + IA) ---------- */
 async function importFaturaPDF(dataUrl){
-  const of=loadOF();
   if(!aiReady()){alert('Entre com o Google (menu ≡) para a IA ler a fatura.');return;}
   const b64=(dataUrl.split(',')[1])||'';
   openSheet('<h2>Lendo a fatura…</h2><p class="hint">A IA está extraindo as compras. Isso leva alguns segundos.</p>');
@@ -2212,7 +2104,7 @@ function applyFatura(compras,suggested,vencimento){
     const isSub = !!c.assinatura;
     let subId=null;
     if(isSub){ const r=ensureSubscription((c.servico||c.descricao||'Assinatura').trim(),c.valor_parcela,ry,rm); subId=r.id; if(r.created)subN++; }
-    const cat = isSub ? (assinCat||outOther) : (pluggyCat(c.descricao)||outOther);
+    const cat = isSub ? (assinCat||outOther) : (guessCat(c.descricao)||outOther);
     const total=c.parcelas_total||1, atual=c.parcela_atual||1;
     for(let k=atual;k<=total;k++){
       const off=k-atual;
