@@ -361,6 +361,8 @@ function seedEmpty(){
     fixos:[],
     renda:[],
     deletedExt:[],
+    partnerName:'',
+    splits:[],
     budgets:{},
     goals:[],
     spendGoal:0,
@@ -451,6 +453,11 @@ function sanitizeState(raw){
     active:f.active!==false,since:/^\d{4}-\d{2}$/.test(f.since||'')?f.since:null
   }));
   out.deletedExt=(Array.isArray(raw.deletedExt)?raw.deletedExt:[]).slice(0,5000).map(x=>_str(x,200)).filter(Boolean);
+  out.partnerName=_str(raw.partnerName,60);
+  out.splits=(Array.isArray(raw.splits)?raw.splits:[]).slice(0,3000).map(s=>{
+    if(s.kind==='settle')return {id:_str(s.id,64)||uid(),kind:'settle',date:_date(s.date),amount:Math.abs(_num(s.amount)),dir:_enum(s.dir,['partner_to_me','me_to_partner'],'partner_to_me')};
+    return {id:_str(s.id,64)||uid(),kind:'exp',date:_date(s.date),desc:_str(s.desc,120),total:Math.abs(_num(s.total)),payer:_enum(s.payer,['me','partner'],'me'),myShare:Math.max(0,_num(s.myShare)),partnerShare:Math.max(0,_num(s.partnerShare))};
+  }).filter(s=>s.kind==='settle'?s.amount>0:s.total>0);
   return out;
 }
 const catById=id=>S.categories.find(c=>c.id===id);
@@ -1610,6 +1617,7 @@ function openMenu(){
     <button class="menu-item" id="mBudgets"><span class="mi">◑</span><div>Orçamentos<small>metas de gasto por categoria</small></div></button>
     <button class="menu-item" id="mGoals"><span class="mi">◎</span><div>Metas de economia<small>reserva, viagem, objetivos</small></div></button>
     <button class="menu-item" id="mCofrinho"><span class="mi">▣</span><div>Cofrinho<small>guardar por mês, semestre e ano</small></div></button>
+    <button class="menu-item" id="mSplit"><span class="mi">÷</span><div>Divisão de despesas<small>racha de contas: quem deve a quem</small></div></button>
     <button class="menu-item" id="mReport"><span class="mi">▤</span><div>Relatório<small>do mês ou do ano, conforme o período</small></div></button>
     <button class="menu-item" id="mAsk"><span class="mi">✦</span><div>Pergunte à IA<small>pergunte sobre seus gastos</small></div></button>
     <button class="menu-item" id="mCatAI"><span class="mi">✦</span><div>Categorizar com IA<small>classifica lançamentos sem categoria</small></div></button>
@@ -1630,6 +1638,7 @@ function openMenu(){
   $('#mBudgets').onclick=openBudgets;
   $('#mGoals').onclick=openGoals;
   $('#mCofrinho').onclick=openCofrinho;
+  $('#mSplit').onclick=openSplit;
   $('#mReport').onclick=openReport;
   $('#mAsk').onclick=openAskAI;
   $('#mCatAI').onclick=categorizeAI;
@@ -1795,6 +1804,236 @@ function openReport(){
   $('#repCopy').onclick=()=>{
     const txt=`Relatório ${label}\nEntrou: ${brl(inc)}\nSaiu: ${brl(exp)}\nSaldo do mês: ${brl(inc-exp)}\nEm caixa no fim: ${brl(emCaixa)}\n\nTop categorias:\n`+cats.map(c=>`- ${c.name}: ${brl(c.total)} (${Math.round(c.total/totExp*100)}%)`).join('\n')+`\n\nMaiores gastos:\n`+big.map(t=>`- ${t.desc||'(sem nome)'}: ${brl(t.amount)}`).join('\n')+`\n\nRecorrente: ${brl(recorrente)}/mês`;
     (navigator.clipboard&&navigator.clipboard.writeText?navigator.clipboard.writeText(txt).then(()=>alert('Resumo copiado.')).catch(()=>alert('Não consegui copiar automaticamente.')):alert('Cópia não suportada neste navegador.'));
+  };
+}
+/* ---------- divisão de despesas (casal) ---------- */
+function splitBalance(){
+  let b=0;
+  (S.splits||[]).forEach(s=>{
+    if(s.kind==='settle'){ if(s.dir==='partner_to_me')b-=s.amount; else b+=s.amount; }
+    else { if(s.payer==='me')b+=s.partnerShare; else b-=s.myShare; }
+  });
+  return Math.round(b*100)/100;
+}
+function splitRow(s){
+  const pn=S.partnerName||'parceiro(a)';
+  const d=new Intl.DateTimeFormat('pt-BR',{day:'2-digit',month:'short'}).format(parseD(s.date)).replace('.','');
+  if(s.kind==='settle'){
+    const txt=s.dir==='partner_to_me'?`${esc(pn)} te pagou`:`Você pagou ${esc(pn)}`;
+    return `<div class="tx" data-spdel="${s.id}"><div class="ic" style="background:var(--surface-2);color:var(--muted)">⇄</div><div class="mid"><div class="d">Acerto · ${txt}</div><div class="m">${d}</div></div><div class="amt num">${brl(s.amount)}</div></div>`;
+  }
+  const payer=s.payer==='me'?'Você pagou':`${esc(pn)} pagou`;
+  return `<div class="tx" data-spdel="${s.id}"><div class="ic" style="background:var(--surface-2);color:var(--muted)">÷</div><div class="mid"><div class="d">${esc(s.desc||'Despesa')}</div><div class="m">${d} · ${payer} · sua parte ${brl(s.myShare)}</div></div><div class="amt num out">${brl(s.total)}</div></div>`;
+}
+/* ----- divisão COMPARTILHADA (duas contas Google) ----- */
+async function loadCouple(){
+  if(!sb||!authUser)return null;
+  const {data,error}=await sb.from('couples').select('*').or(`member_a.eq.${authUser.id},member_b.eq.${authUser.id}`).eq('status','active').limit(1);
+  if(error){console.warn('loadCouple',error);return null;}
+  return (data&&data[0])||null;
+}
+async function loadPendingInvite(){
+  if(!sb||!authUser||!authUser.email)return null;
+  const {data,error}=await sb.from('couples').select('*').eq('status','pending').ilike('invite_email',authUser.email).limit(1);
+  if(error){console.warn('invite',error);return null;}
+  return (data&&data[0])||null;
+}
+async function createCouple(email){
+  const {error}=await sb.from('couples').insert({created_by:authUser.id,member_a:authUser.id,a_email:(authUser.email||'').toLowerCase(),invite_email:email.toLowerCase(),status:'pending'});
+  if(error)throw new Error(error.message);
+}
+async function acceptCouple(id){
+  const {error}=await sb.from('couples').update({member_b:authUser.id,b_email:(authUser.email||'').toLowerCase(),status:'active'}).eq('id',id);
+  if(error)throw new Error(error.message);
+}
+async function loadItems(coupleId){
+  const {data,error}=await sb.from('split_items').select('*').eq('couple_id',coupleId).order('created_at',{ascending:false});
+  if(error)throw new Error(error.message);
+  return data||[];
+}
+async function approveItem(id){ const {error}=await sb.from('split_items').update({status:'approved'}).eq('id',id); if(error)throw new Error(error.message); }
+async function rejectItem(id){ const {error}=await sb.from('split_items').update({status:'rejected'}).eq('id',id); if(error)throw new Error(error.message); }
+async function deleteSharedItem(id){ const {error}=await sb.from('split_items').delete().eq('id',id); if(error)throw new Error(error.message); }
+function sharedBalance(items,me){
+  let b=0;
+  items.forEach(it=>{ if(it.status!=='approved')return;
+    if(it.kind==='settle'){ if(it.to_user===me)b-=Number(it.amount||0); else if(it.from_user===me)b+=Number(it.amount||0); }
+    else { const sh=it.shares||{}; const other=Object.keys(sh).find(u=>u!==me); if(it.paid_by===me)b+=Number(sh[other]||0); else if(it.paid_by===other)b-=Number(sh[me]||0); }
+  });
+  return Math.round(b*100)/100;
+}
+function sharedRow(it,me,otherEmail){
+  const d=new Intl.DateTimeFormat('pt-BR',{day:'2-digit',month:'short'}).format(parseD(it.date)).replace('.','');
+  const mine=it.created_by===me;
+  const canApprove=!mine&&it.status==='pending';
+  const statusTag=it.status==='pending'?(mine?'<span class="tag">aguardando</span>':'<span class="tag">aprovar</span>'):(it.status==='rejected'?'<span class="tag">recusado</span>':'');
+  const actions=canApprove?`<div style="display:flex;gap:6px;margin-top:6px"><button class="btn sm" data-shapp="${it.id}">Aprovar</button><button class="btn sm ghost" data-shrej="${it.id}">Recusar</button></div>`:(mine?`<button class="del" data-shdel="${it.id}" style="width:auto;margin:4px 0 0;padding:2px 0;font-size:12px;text-align:left">remover</button>`:'');
+  let title,meta,amt,cls='';
+  if(it.kind==='settle'){ title='Acerto · '+(it.to_user===me?`${esc(otherEmail)} te pagou`:`Você pagou ${esc(otherEmail)}`); meta=d; amt=brl(Number(it.amount||0)); }
+  else { const sh=it.shares||{}; title=esc(it.descr||'Despesa'); meta=`${d} · ${it.paid_by===me?'Você pagou':esc(otherEmail)+' pagou'} · sua parte ${brl(Number(sh[me]||0))}`; amt=brl(Number(it.total||0)); cls='out'; }
+  return `<div style="padding:10px 2px;border-bottom:1px solid var(--line)">
+    <div style="display:flex;align-items:center;gap:10px">
+      <div style="flex:1;min-width:0"><div style="font-weight:600;font-size:14px">${title} ${statusTag}</div><div style="font-size:12px;color:var(--muted)">${meta}</div></div>
+      <div class="amt num ${cls}" style="${it.status==='approved'?'':'opacity:.55'}">${amt}</div>
+    </div>${actions}</div>`;
+}
+async function openSplit(){
+  if(!sb||!authUser){ renderSplitLocal(); return; }
+  openSheet('<h2>Divisão (casal)</h2><p class="hint" id="spLoad">Carregando…</p>');
+  let couple=null, invite=null;
+  try{ couple=await loadCouple(); if(!couple)invite=await loadPendingInvite(); }
+  catch(e){ const l=$('#spLoad'); if(l)l.textContent='Erro ao carregar: '+e.message; return; }
+  if(couple)return renderSplitShared(couple);
+  return renderCoupleLink(invite);
+}
+function renderCoupleLink(invite){
+  openSheet(`<h2>Divisão (casal)</h2>
+    ${invite?`<section class="card" style="padding:14px 16px;margin-bottom:12px;border-left:4px solid var(--pos)"><div style="font-weight:600;margin-bottom:6px">Convite recebido</div><div class="hint" style="margin:0">${esc(invite.a_email||'Alguém')} quer dividir despesas com você.</div><button class="btn block" id="clAccept" style="margin-top:12px">Aceitar convite</button></section>`:''}
+    <div class="field"><label>Convidar parceiro(a) pelo e-mail do Google</label><input id="clEmail" type="email" inputmode="email" placeholder="email@gmail.com"></div>
+    <button class="btn block" id="clInvite">Enviar convite</button>
+    <button class="btn ghost block" id="clLocal" style="margin-top:10px">Usar modo local (só meu aparelho)</button>
+    <button class="btn ghost block" id="clBack" style="margin-top:10px">Voltar</button>
+    <p class="hint" style="margin-top:10px">O parceiro precisa abrir o app e entrar com o Google dele. Depois que aceitar, as despesas divididas aparecem para os dois, com aprovação.</p>`);
+  if(invite){const ac=$('#clAccept'); if(ac)ac.onclick=async()=>{ try{await acceptCouple(invite.id);}catch(e){alert('Erro ao aceitar: '+e.message);return;} openSplit(); };}
+  $('#clInvite').onclick=async()=>{ const em=$('#clEmail').value.trim().toLowerCase(); if(!/^[^@]+@[^@]+\.[^@]+$/.test(em)){alert('Digite um e-mail válido.');return;} if(em===(authUser.email||'').toLowerCase()){alert('Use o e-mail do seu parceiro, não o seu.');return;} try{await createCouple(em);}catch(e){alert('Erro ao convidar: '+e.message);return;} alert('Convite enviado. Peça para '+em+' abrir o app (logado nesse Google) e aceitar em Divisão.'); openSplit(); };
+  $('#clLocal').onclick=renderSplitLocal;
+  $('#clBack').onclick=openMenu;
+}
+async function renderSplitShared(couple){
+  const me=authUser.id;
+  const otherEmail=(couple.member_a===me?couple.b_email:couple.a_email)||'parceiro(a)';
+  openSheet('<h2>Divisão (casal)</h2><p class="hint" id="spLoad">Carregando itens…</p>');
+  let items=[];
+  try{ items=await loadItems(couple.id); }catch(e){ const l=$('#spLoad'); if(l)l.textContent='Erro: '+e.message; return; }
+  const bal=sharedBalance(items,me);
+  const col=bal>0?'var(--pos)':(bal<0?'var(--neg)':'var(--muted)');
+  const who=bal>0?`${esc(otherEmail)} te deve`:(bal<0?`Você deve a ${esc(otherEmail)}`:'Vocês estão quites');
+  const pend=items.filter(it=>it.created_by!==me&&it.status==='pending');
+  const rows=items.map(it=>sharedRow(it,me,otherEmail)).join('')||emptyInline('Nada ainda');
+  openSheet(`<h2>Divisão (casal)</h2>
+    <div class="callout" style="margin-bottom:12px">Compartilhando com <b style="color:var(--ink)">${esc(otherEmail)}</b></div>
+    ${pend.length?`<section class="card" style="padding:12px 14px;margin-bottom:12px;border-left:4px solid #D99A2B"><div style="font-size:13px;font-weight:600;color:#D99A2B">${pend.length} item(ns) esperando a sua aprovação</div></section>`:''}
+    <section class="card hero" style="padding:18px;margin-bottom:12px"><div class="cap">${who}</div><div class="bal num" style="color:${col};font-size:32px">${brl(Math.abs(bal))}</div></section>
+    <div class="sheet-actions"><button class="btn ghost" id="shSettle">Registrar acerto</button><button class="btn" id="shAdd">+ Despesa dividida</button></div>
+    <div class="sec-h" style="margin:16px 2px 6px"><h2 style="font-size:13px">Histórico</h2></div>
+    <section class="card" style="padding:4px 16px"><div class="list">${rows}</div></section>
+    <button class="btn ghost block" id="shBack" style="margin-top:12px">Voltar</button>
+    <p class="hint" style="margin-top:10px">Cada despesa/acerto só entra no saldo depois que o outro aprova. Isto não mexe no "Em caixa" de ninguém.</p>`);
+  $('#shBack').onclick=openMenu;
+  $('#shAdd').onclick=()=>openSharedExp(couple);
+  $('#shSettle').onclick=()=>openSharedSettle(couple);
+  $$('[data-shapp]').forEach(el=>el.onclick=async()=>{ try{await approveItem(el.dataset.shapp);}catch(e){alert('Erro: '+e.message);} renderSplitShared(couple); });
+  $$('[data-shrej]').forEach(el=>el.onclick=async()=>{ if(!confirm('Recusar este item?'))return; try{await rejectItem(el.dataset.shrej);}catch(e){alert('Erro: '+e.message);} renderSplitShared(couple); });
+  $$('[data-shdel]').forEach(el=>el.onclick=async()=>{ if(!confirm('Remover este item?'))return; try{await deleteSharedItem(el.dataset.shdel);}catch(e){alert('Erro: '+e.message);} renderSplitShared(couple); });
+}
+function openSharedExp(couple){
+  const me=authUser.id; const other=couple.member_a===me?couple.member_b:couple.member_a;
+  const otherEmail=(couple.member_a===me?couple.b_email:couple.a_email)||'parceiro(a)';
+  openSheet(`<h2>Despesa dividida</h2>
+    <div class="field"><label>Descrição</label><input id="seDesc" placeholder="Ex.: Mercado"></div>
+    <div class="row2"><div class="field"><label>Valor total</label><input id="seTotal" type="number" step="0.01" inputmode="decimal" placeholder="0,00"></div><div class="field"><label>Data</label><input id="seDate" type="date" value="${todayStr()}"></div></div>
+    <div class="field"><label>Quem pagou</label><select id="sePayer"><option value="me">Eu paguei</option><option value="other">${esc(otherEmail)} pagou</option></select></div>
+    <div class="field"><label>Como dividir</label><select id="seMode"><option value="half">Metade (50/50)</option><option value="custom">Valor personalizado</option></select></div>
+    <div class="field" id="seCustomWrap" style="display:none"><label>Quanto é a SUA parte (R$)</label><input id="seMine" type="number" step="0.01" inputmode="decimal"></div>
+    <div class="sheet-actions"><button class="btn ghost" id="seCancel">Cancelar</button><button class="btn" id="seSave">Enviar p/ aprovação</button></div>
+    <p class="hint">Fica pendente até ${esc(otherEmail)} aprovar.</p>`);
+  $('#seMode').onchange=()=>{$('#seCustomWrap').style.display=$('#seMode').value==='custom'?'':'none';};
+  $('#seCancel').onclick=()=>renderSplitShared(couple);
+  $('#seSave').onclick=async()=>{
+    const total=Math.abs(parseFloat($('#seTotal').value)||0); if(!total){$('#seTotal').focus();return;}
+    let myShare=$('#seMode').value==='custom'?Math.abs(parseFloat($('#seMine').value)||0):total/2; if(myShare>total)myShare=total;
+    const partnerShare=Math.round((total-myShare)*100)/100; myShare=Math.round(myShare*100)/100;
+    const paid_by=$('#sePayer').value==='other'?other:me;
+    const shares={}; shares[me]=myShare; shares[other]=partnerShare;
+    const {error}=await sb.from('split_items').insert({couple_id:couple.id,created_by:me,kind:'exp',date:$('#seDate').value||todayStr(),descr:$('#seDesc').value.trim(),total:Math.round(total*100)/100,paid_by,shares,status:'pending'});
+    if(error){alert('Erro ao salvar: '+error.message);return;}
+    renderSplitShared(couple);
+  };
+}
+function openSharedSettle(couple){
+  const me=authUser.id; const other=couple.member_a===me?couple.member_b:couple.member_a;
+  const otherEmail=(couple.member_a===me?couple.b_email:couple.a_email)||'parceiro(a)';
+  openSheet(`<h2>Registrar acerto</h2>
+    <div class="field"><label>Quem pagou</label><select id="ssDir"><option value="other_to_me">${esc(otherEmail)} me pagou</option><option value="me_to_other">Eu paguei ${esc(otherEmail)}</option></select></div>
+    <div class="row2"><div class="field"><label>Valor</label><input id="ssAmt" type="number" step="0.01" inputmode="decimal" placeholder="0,00"></div><div class="field"><label>Data</label><input id="ssDate" type="date" value="${todayStr()}"></div></div>
+    <div class="sheet-actions"><button class="btn ghost" id="ssCancel">Cancelar</button><button class="btn" id="ssSave">Enviar p/ aprovação</button></div>
+    <p class="hint">Fica pendente até ${esc(otherEmail)} confirmar.</p>`);
+  $('#ssCancel').onclick=()=>renderSplitShared(couple);
+  $('#ssSave').onclick=async()=>{
+    const amt=Math.abs(parseFloat($('#ssAmt').value)||0); if(!amt){$('#ssAmt').focus();return;}
+    const dir=$('#ssDir').value;
+    const from_user=dir==='me_to_other'?me:other, to_user=dir==='me_to_other'?other:me;
+    const {error}=await sb.from('split_items').insert({couple_id:couple.id,created_by:me,kind:'settle',date:$('#ssDate').value||todayStr(),amount:Math.round(amt*100)/100,from_user,to_user,status:'pending'});
+    if(error){alert('Erro ao salvar: '+error.message);return;}
+    renderSplitShared(couple);
+  };
+}
+function renderSplitLocal(){
+  const pn=S.partnerName||'';
+  const bal=splitBalance();
+  const who=bal>0?`${esc(pn||'Seu parceiro(a)')} te deve`:(bal<0?`Você deve a ${esc(pn||'seu parceiro(a)')}`:'Vocês estão quites');
+  const col=bal>0?'var(--pos)':(bal<0?'var(--neg)':'var(--muted)');
+  const rows=[...(S.splits||[])].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,60).map(splitRow).join('')||emptyInline('Nada registrado ainda');
+  openSheet(`<h2>Divisão de despesas</h2>
+    <div class="field"><label>Nome do parceiro(a)</label><input id="spName" placeholder="Ex.: Maria" value="${esc(pn)}"></div>
+    <section class="card hero" style="padding:18px;margin-bottom:12px">
+      <div class="cap">${who}</div>
+      <div class="bal num" style="color:${col};font-size:32px">${brl(Math.abs(bal))}</div>
+    </section>
+    <div class="sheet-actions"><button class="btn ghost" id="spSettle">Registrar acerto</button><button class="btn" id="spAdd">+ Despesa dividida</button></div>
+    <div class="sec-h" style="margin:16px 2px 6px"><h2 style="font-size:13px">Histórico</h2></div>
+    <section class="card" style="padding:4px 16px"><div class="list">${rows}</div></section>
+    <button class="btn ghost block" id="spBack" style="margin-top:12px">Voltar</button>
+    <p class="hint" style="margin-top:10px">Registre as despesas que vocês dividem (quem pagou e como rachar). O saldo mostra quem deve a quem. Isto é um controle à parte — não mexe no seu "Em caixa".</p>`);
+  const nm=$('#spName'); if(nm)nm.onchange=()=>{S.partnerName=nm.value.trim();save();};
+  $('#spAdd').onclick=openSplitAdd;
+  $('#spSettle').onclick=openSplitSettle;
+  $('#spBack').onclick=openMenu;
+  $$('[data-spdel]').forEach(el=>el.onclick=()=>{ if(!confirm('Remover este item da divisão?'))return; S.splits=S.splits.filter(x=>x.id!==el.dataset.spdel); save(); openSplit(); });
+}
+function openSplitAdd(){
+  const pn=S.partnerName||'parceiro(a)';
+  openSheet(`<h2>Despesa dividida</h2>
+    <div class="field"><label>Descrição</label><input id="spDesc" placeholder="Ex.: Mercado"></div>
+    <div class="row2">
+      <div class="field"><label>Valor total</label><input id="spTotal" type="number" step="0.01" inputmode="decimal" placeholder="0,00"></div>
+      <div class="field"><label>Data</label><input id="spDate" type="date" value="${todayStr()}"></div>
+    </div>
+    <div class="field"><label>Quem pagou</label><select id="spPayer"><option value="me">Eu paguei</option><option value="partner">${esc(pn)} pagou</option></select></div>
+    <div class="field"><label>Como dividir</label><select id="spMode"><option value="half">Metade (50/50)</option><option value="custom">Valor personalizado</option></select></div>
+    <div class="field" id="spCustomWrap" style="display:none"><label>Quanto é a SUA parte (R$)</label><input id="spMine" type="number" step="0.01" inputmode="decimal" placeholder="0,00"></div>
+    <div class="sheet-actions"><button class="btn ghost" id="spCancel">Cancelar</button><button class="btn" id="spSave">Adicionar</button></div>`);
+  $('#spMode').onchange=()=>{$('#spCustomWrap').style.display=$('#spMode').value==='custom'?'':'none';};
+  $('#spCancel').onclick=openSplit;
+  $('#spSave').onclick=()=>{
+    const total=Math.abs(parseFloat($('#spTotal').value)||0); if(!total){$('#spTotal').focus();return;}
+    const payer=$('#spPayer').value==='partner'?'partner':'me';
+    let myShare=$('#spMode').value==='custom'?Math.abs(parseFloat($('#spMine').value)||0):total/2;
+    if(myShare>total)myShare=total;
+    const partnerShare=Math.round((total-myShare)*100)/100; myShare=Math.round(myShare*100)/100;
+    S.splits=S.splits||[];
+    S.splits.push({id:uid(),kind:'exp',date:$('#spDate').value||todayStr(),desc:$('#spDesc').value.trim(),total:Math.round(total*100)/100,payer,myShare,partnerShare});
+    save(); openSplit();
+  };
+}
+function openSplitSettle(){
+  const pn=S.partnerName||'parceiro(a)';
+  const bal=splitBalance();
+  const suggest=bal<0?'me_to_partner':'partner_to_me';
+  openSheet(`<h2>Registrar acerto</h2>
+    <p class="hint" style="margin:0 0 10px">${bal>0?`${esc(pn)} te deve ${brl(bal)}.`:(bal<0?`Você deve ${brl(Math.abs(bal))} a ${esc(pn)}.`:'Vocês estão quites.')}</p>
+    <div class="field"><label>Quem pagou</label><select id="stDir"><option value="partner_to_me" ${suggest==='partner_to_me'?'selected':''}>${esc(pn)} me pagou</option><option value="me_to_partner" ${suggest==='me_to_partner'?'selected':''}>Eu paguei ${esc(pn)}</option></select></div>
+    <div class="row2">
+      <div class="field"><label>Valor</label><input id="stAmt" type="number" step="0.01" inputmode="decimal" value="${bal!==0?Math.abs(bal):''}" placeholder="0,00"></div>
+      <div class="field"><label>Data</label><input id="stDate" type="date" value="${todayStr()}"></div>
+    </div>
+    <div class="sheet-actions"><button class="btn ghost" id="stCancel">Cancelar</button><button class="btn" id="stSave">Registrar</button></div>`);
+  $('#stCancel').onclick=openSplit;
+  $('#stSave').onclick=()=>{
+    const amt=Math.abs(parseFloat($('#stAmt').value)||0); if(!amt){$('#stAmt').focus();return;}
+    S.splits=S.splits||[];
+    S.splits.push({id:uid(),kind:'settle',date:$('#stDate').value||todayStr(),amount:Math.round(amt*100)/100,dir:$('#stDir').value});
+    save(); openSplit();
   };
 }
 function openReportYear(){
