@@ -235,7 +235,7 @@ input,select{font-family:inherit;font-size:16px}
         <button class="chev" id="nextP" aria-label="Próximo">›</button>
         <button class="toptoggle" id="periodTog" title="Ver o ano inteiro">Ano</button>
       </div>
-      <button class="iconbtn" id="themeBtn" title="Tema" aria-label="Alternar tema">◐</button>
+      <button class="iconbtn" id="bellBtn" title="Notificações" aria-label="Notificações" style="position:relative;display:none">${''}<span id="bellIco"></span><span id="bellBadge" style="position:absolute;top:-5px;right:-5px;min-width:17px;height:17px;padding:0 4px;border-radius:9px;background:var(--neg);color:#fff;font-size:10px;font-weight:700;display:none;place-items:center;line-height:1">0</span></button>
       <button class="iconbtn" id="menuBtn" title="Menu" aria-label="Menu">≡</button>
     </div>
   </div>
@@ -274,7 +274,8 @@ function svgIcon(name,size=16){
     chart:'<polyline points="3 17 9 11 13 15 21 7"/><polyline points="15 7 21 7 21 13"/>',
     repeat:'<polyline points="17 2 21 6 17 10"/><path d="M3 12V9a4 4 0 0 1 4-4h14"/><polyline points="7 22 3 18 7 14"/><path d="M21 12v3a4 4 0 0 1-4 4H3"/>',
     arrowDown:'<line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/>',
-    arrowUp:'<line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/>'
+    arrowUp:'<line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/>',
+    bell:'<path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>'
   };
   return `<svg ${a}>${P[name]||''}</svg>`;
 }
@@ -319,8 +320,8 @@ function updateAuthUI(){ const el=document.getElementById('brandSub'); if(!el)re
 function initAuth(){
   if(!window.supabase||!SUPABASE_URL||!SUPABASE_ANON_KEY)return;
   try{ sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY); }catch(e){ sb=null; return; }
-  sb.auth.onAuthStateChange((_e,session)=>{ const u=session?.user||null; const was=authUser&&authUser.id; authUser=u; authToken=session?.access_token||null; updateAuthUI(); if(u&&u.id!==was)syncPull(); });
-  sb.auth.getSession().then(({data})=>{ authUser=(data&&data.session&&data.session.user)||null; authToken=(data&&data.session&&data.session.access_token)||null; updateAuthUI(); if(authUser)syncPull(); }).catch(()=>{});
+  sb.auth.onAuthStateChange((_e,session)=>{ const u=session?.user||null; const was=authUser&&authUser.id; authUser=u; authToken=session?.access_token||null; updateAuthUI(); if(u&&u.id!==was){syncPull(); refreshNotifs();} if(!u){notif.shown=false;updateBell();} });
+  sb.auth.getSession().then(({data})=>{ authUser=(data&&data.session&&data.session.user)||null; authToken=(data&&data.session&&data.session.access_token)||null; updateAuthUI(); if(authUser){syncPull(); refreshNotifs();} }).catch(()=>{});
 }
 async function loginGoogle(){
   if(!sb){ alert('A sincronização só funciona no seu domínio (caixinha-delta.vercel.app), não na pré-visualização.'); return; }
@@ -1609,6 +1610,7 @@ function openMenu(){
     <button class="menu-item" id="mExportCsv"><span class="mi">▦</span><div>Exportar tudo (CSV)<small>todos os lançamentos</small></div></button>
     <button class="menu-item" id="mImportJson"><span class="mi">↑</span><div>Restaurar backup<small>carrega um .json salvo antes</small></div></button>
     <button class="menu-item" id="mImportCsv"><span class="mi">≣</span><div>Importar extrato<small>PDF (a IA lê) · ou CSV/OFX</small></div></button>
+    <button class="menu-item" id="mTheme"><span class="mi">◐</span><div>Tema claro / escuro<small>alternar aparência</small></div></button>
     <button class="menu-item" id="mInstall"><span class="mi">⇩</span><div>Instalar app<small>ícone na tela inicial, tela cheia</small></div></button>
     <button class="menu-item" id="mNotif"><span class="mi">◔</span><div>Ativar notificações<small>avisos de fatura e assinatura</small></div></button>
     <button class="menu-item" id="mTransfer"><span class="mi">⇄</span><div>Transferência<small>entre contas ou para o cofrinho</small></div></button>
@@ -1630,6 +1632,7 @@ function openMenu(){
   $('#mExportCsv').onclick=()=>exportCsv('all');
   $('#mImportJson').onclick=()=>pickFile('json');
   $('#mImportCsv').onclick=()=>pickFile('csv');
+  $('#mTheme').onclick=()=>{toggleTheme();};
   $('#mInstall').onclick=installApp;
   $('#mNotif').onclick=enableNotifications;
   $('#mTransfer').onclick=openTransfer;
@@ -1876,6 +1879,44 @@ function sharedRow(it,me,otherEmail){
       <div style="flex:1;min-width:0"><div style="font-weight:600;font-size:14px">${title} ${statusTag}</div><div style="font-size:12px;color:var(--muted)">${meta}</div></div>
       <div class="amt num ${cls}" style="${it.status==='approved'?'':'opacity:.55'}">${amt}</div>
     </div>${actions}</div>`;
+}
+/* ----- notificações (sino) ----- */
+let notif={count:0,invite:null,pending:[],couple:null,shown:false};
+async function refreshNotifs(){
+  if(!sb||!authUser){ notif.count=0;notif.invite=null;notif.pending=[];notif.couple=null; updateBell(); return; }
+  try{
+    const couple=await loadCouple();
+    let pending=[],invite=null;
+    if(couple){ const items=await loadItems(couple.id); pending=items.filter(it=>it.created_by!==authUser.id&&it.status==='pending'); }
+    else { invite=await loadPendingInvite(); }
+    notif.couple=couple; notif.pending=pending; notif.invite=invite; notif.count=pending.length+(invite?1:0);
+  }catch(e){ console.warn('refreshNotifs',e); }
+  updateBell();
+  if(notif.count>0 && !notif.shown){ notif.shown=true; openNotifications(); }
+}
+function updateBell(){
+  const b=$('#bellBtn'); if(!b)return;
+  b.style.display=(sb&&authUser)?'grid':'none';
+  const badge=$('#bellBadge'); if(badge){ badge.style.display=notif.count>0?'grid':'none'; badge.textContent=notif.count>9?'9+':String(notif.count); }
+}
+function openNotifications(){
+  const me=authUser?authUser.id:null;
+  const inv=notif.invite, pend=notif.pending||[];
+  const coupleEmail=notif.couple?((notif.couple.member_a===me?notif.couple.b_email:notif.couple.a_email)||'parceiro(a)'):'';
+  let body='';
+  if(inv){ body+=`<section class="card" style="padding:14px 16px;margin-bottom:12px;border-left:4px solid var(--pos)"><div style="font-weight:600;margin-bottom:4px">Convite de divisão</div><div class="hint" style="margin:0 0 10px">${esc(inv.a_email||'Alguém')} quer dividir despesas com você.</div><div class="sheet-actions"><button class="btn ghost" id="nInvRej">Recusar</button><button class="btn" id="nInvAcc">Aceitar</button></div></section>`; }
+  if(pend.length){ body+=`<div class="sec-h" style="margin:4px 2px 6px"><h2 style="font-size:13px">Para aprovar</h2></div>`+pend.map(it=>{
+    const d=new Intl.DateTimeFormat('pt-BR',{day:'2-digit',month:'short'}).format(parseD(it.date)).replace('.','');
+    const desc=it.kind==='settle'?('Acerto · '+brl(Number(it.amount||0))):(esc(it.descr||'Despesa')+' · '+brl(Number(it.total||0)));
+    return `<section class="card" style="padding:12px 14px;margin-bottom:8px"><div style="font-weight:600;font-size:14px">${desc}</div><div class="hint" style="margin:2px 0 8px">${esc(coupleEmail)} · ${d}</div><div class="sheet-actions"><button class="btn ghost" data-nrej="${it.id}">Recusar</button><button class="btn" data-napp="${it.id}">Aprovar</button></div></section>`;
+  }).join(''); }
+  if(!body)body='<div class="empty" style="padding:30px"><p>Nada pendente por aqui.</p></div>';
+  openSheet(`<h2>Notificações</h2>${body}<button class="btn ghost block" id="nClose" style="margin-top:8px">Fechar</button>`);
+  $('#nClose').onclick=closeSheet;
+  const ia=$('#nInvAcc'); if(ia)ia.onclick=async()=>{ try{await acceptCouple(inv.id);}catch(e){alert('Erro ao aceitar: '+e.message);return;} await refreshNotifs(); openNotifications(); };
+  const ir=$('#nInvRej'); if(ir)ir.onclick=async()=>{ try{await sb.from('couples').update({member_b:authUser.id,status:'rejected'}).eq('id',inv.id);}catch(e){} await refreshNotifs(); closeSheet(); };
+  $$('[data-napp]').forEach(el=>el.onclick=async()=>{ try{await approveItem(el.dataset.napp);}catch(e){alert('Erro: '+e.message);} await refreshNotifs(); openNotifications(); });
+  $$('[data-nrej]').forEach(el=>el.onclick=async()=>{ if(!confirm('Recusar este item?'))return; try{await rejectItem(el.dataset.nrej);}catch(e){alert('Erro: '+e.message);} await refreshNotifs(); openNotifications(); });
 }
 async function openSplit(){
   if(!sb||!authUser){ renderSplitLocal(); return; }
@@ -2658,12 +2699,12 @@ function seedDemo(){
 function applyTheme(t){ if(t)document.documentElement.setAttribute('data-theme',t); else document.documentElement.removeAttribute('data-theme');
   try{localStorage.setItem('caixa.theme',t||'');}catch(e){} }
 (function initTheme(){try{const t=localStorage.getItem('caixa.theme');if(t)applyTheme(t);}catch(e){}})();
-$('#themeBtn').onclick=()=>{
+function toggleTheme(){
   const cur=document.documentElement.getAttribute('data-theme');
   const sysDark=matchMedia('(prefers-color-scheme: dark)').matches;
   const next= cur? (cur==='dark'?'light':'dark') : (sysDark?'light':'dark');
-  applyTheme(next); if(ui.view==='overview')render();
-};
+  applyTheme(next); render();
+}
 
 /* ---------- global wiring ---------- */
 $('#periodTog').onclick=()=>{ui.period=ui.period==='year'?'month':'year';render();};
@@ -2678,6 +2719,9 @@ renderTabbar();
 $$('#tabbar button').forEach(b=>b.onclick=()=>{ui.view=b.dataset.v;render();});
 $('#fab').onclick=()=>openTx();
 $('#menuBtn').onclick=openMenu;
+{const bi=$('#bellIco'); if(bi)bi.innerHTML=svgIcon('bell',18);}
+$('#bellBtn').onclick=openNotifications;
+updateBell();
 window.addEventListener('keydown',e=>{if(e.key==='Escape')closeSheet();});
 
 /* ---------- PWA: instalação, service worker, notificações ---------- */
