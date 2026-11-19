@@ -638,7 +638,7 @@ function viewOverview(){
     const budRows=Object.keys(S.budgets).map(cid=>{
       const c=catById(cid); if(!c)return '';
       const base=S.budgets[cid];
-      const roll=S.budgetRollover?(base-(prevByCat[cid]||0)):0;
+      const roll=(S.budgetRollover&&(prevByCat[cid]||0)>0)?(base-prevByCat[cid]):0;
       const lim=Math.max(0,base+roll), sp=spentByCat[cid]||0, pct=lim?Math.min(sp/lim*100,100):100, over=sp>lim, near=!over&&lim>0&&sp>=lim*0.85;
       const col=over?'var(--neg)':(near?'#D99A2B':c.color);
       return `<div style="padding:9px 2px">
@@ -656,7 +656,7 @@ function viewOverview(){
   if(ui.period==='month'&&S.spendGoal>0){
     const pv=range('month',shift('month',ui.ref,-1)); let prevTot=0;
     S.transactions.forEach(t=>{if(t.type==='expense'&&!t.faturaOf&&!t.transfer){const d=parseD(t.date);if(d>=pv.start&&d<=pv.end)prevTot+=t.amount;}});
-    const baseMeta=S.spendGoal, rollT=S.budgetRollover?(baseMeta-prevTot):0;
+    const baseMeta=S.spendGoal, rollT=(S.budgetRollover&&prevTot>0)?(baseMeta-prevTot):0;
     const meta=Math.max(0,baseMeta+rollT), pct=meta?Math.min(exp/meta*100,100):100, over=exp>meta, near=!over&&meta>0&&exp>=meta*0.85;
     const col=over?'var(--neg)':(near?'#D99A2B':'var(--accent)'); const diff=baseMeta-prevTot;
     spendGoalHtml=`<div class="sec-h"><h2>Meta de gastos do mês</h2><button class="link" data-openbud>editar</button></div>
@@ -853,7 +853,7 @@ function viewTx(){
     <button class="chip ${ui.txFilter==='income'?'on':''}" data-filter="income">Entradas</button>
   </div>
   ${(()=>{const tags=[...new Set(txInRange().flatMap(t=>t.tags||[]))].sort((a,b)=>a.localeCompare(b));
-    if(!tags.length)return '';
+    if(!tags.length&&!ui.txTag)return '';
     return `<div class="filters">${ui.txTag?`<button class="chip on" data-tag="">✕ #${esc(ui.txTag)}</button>`:''}${tags.map(tg=>ui.txTag===tg?'':`<button class="chip" data-tag="${esc(tg)}">#${esc(tg)}</button>`).join('')}</div>`;
   })()}
   <div class="subtotal"><div><div style="font-size:12px;color:var(--muted);font-weight:600">neste período</div>
