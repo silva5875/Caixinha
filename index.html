@@ -392,6 +392,7 @@ function sanitizeState(raw){
     if(t.fixo)o.fixo=true;
     if(t.paid)o.paid=true;
     if(t.faturaOf)o.faturaOf=_str(t.faturaOf,64);
+    if(t.faturaPagaId)o.faturaPagaId=_str(t.faturaPagaId,64);
     if(t.transfer)o.transfer=true;
     if(t.transferId)o.transferId=_str(t.transferId,64);
     if(Array.isArray(t.tags)&&t.tags.length)o.tags=t.tags.map(x=>_str(x,30)).map(x=>x.trim()).filter(Boolean).slice(0,10);
@@ -1457,6 +1458,16 @@ function openCardDetail(id){
       ${items.length?items.map(txRow).join(''):'<div class="hint" style="padding:14px 2px">Nenhum lançamento em aberto.</div>'}
     </div>
     ${used>0?`<button class="btn block" id="cdPay" style="margin-top:14px">Pagar fatura · ${brl(used)}</button>`:''}
+    ${(()=>{const pays=S.transactions.filter(t=>t.faturaOf===c.id).sort((a,b)=>b.date.localeCompare(a.date));
+      if(!pays.length)return '';
+      const fmt=d=>new Intl.DateTimeFormat('pt-BR',{day:'2-digit',month:'short',year:'numeric'}).format(parseD(d));
+      const rows=pays.map(p=>{
+        const its=p.faturaPagaId?S.transactions.filter(t=>t.faturaPagaId===p.faturaPagaId&&t.id!==p.id).sort((a,b)=>b.date.localeCompare(a.date)):[];
+        const inner=its.length?its.map(txRow).join(''):'<div class="hint" style="padding:8px 2px">Itens não detalhados para este pagamento.</div>';
+        return `<details style="border-bottom:1px solid var(--line)"><summary style="display:flex;justify-content:space-between;align-items:center;padding:11px 2px;cursor:pointer"><span style="font-weight:600;font-size:13px">${fmt(p.date)} · ${its.length} item(ns)</span><span class="num" style="font-weight:600">${brl(p.amount)}</span></summary><div style="padding:0 2px 8px">${inner}</div></details>`;
+      }).join('');
+      return `<div class="sec-h" style="margin:16px 2px 6px"><h2 style="font-size:14px">Histórico de faturas pagas</h2></div><section class="card" style="padding:2px 14px">${rows}</section>`;
+    })()}
     <div class="sheet-actions" style="margin-top:10px"><button class="btn ghost" id="cdEdit">Editar cartão</button><button class="btn ghost" id="cdClose">Fechar</button></div>
   `);
   const cp=$('#cdPay'); if(cp)cp.onclick=()=>openPayInvoice(id);
@@ -1482,8 +1493,9 @@ function openPayInvoice(cardId){
   $('#pfCancel').onclick=()=>openCardDetail(cardId);
   $('#pfOk').onclick=()=>{
     const accId=$('#pfAcc').value, date=$('#pfDate').value||todayStr();
-    items.forEach(t=>t.paid=true);
-    S.transactions.push({id:uid(),type:'expense',amount:total,desc:'Pagamento fatura '+c.name,categoryId:contasCat||null,date,account:accId,card:null,subId:null,faturaOf:c.id});
+    const payId=uid();
+    items.forEach(t=>{t.paid=true;t.faturaPagaId=payId;});
+    S.transactions.push({id:uid(),type:'expense',amount:total,desc:'Pagamento fatura '+c.name,categoryId:contasCat||null,date,account:accId,card:null,subId:null,faturaOf:c.id,faturaPagaId:payId});
     save(); closeSheet(); render();
     alert('Fatura paga: '+brl(total)+'. Saiu do caixa uma vez.');
   };
@@ -2148,12 +2160,27 @@ function applyFatura(compras,suggested,vencimento){
       have.add(extId); previsto?prevN++:realN++;
     }
   });
-  save();closeSheet();render();
+  save();render();
   const cardName=cardById(cardId)?.name||'cartão';
   let msg=`Importado em "${cardName}": ${realN} lançamento(s) deste mês · ${prevN} parcela(s) futura(s).`;
   if(dupN)msg+=`\n${dupN} ignorada(s) por já existirem.`;
   if(subN)msg+=`\n${subN} assinatura(s) detectada(s) na aba Recorrentes.`;
-  alert(msg);
+  importFaturaDone(cardId,msg);
+}
+function importFaturaDone(cardId,msg){
+  const c=cardById(cardId); const open=c?cardInvoice(c):0;
+  openSheet(`<h2>Fatura importada</h2>
+    <p style="font-size:14px;line-height:1.55;white-space:pre-wrap">${esc(msg)}</p>
+    ${open>0?`<div class="subtotal" style="margin-top:10px"><div><div style="font-size:12px;color:var(--muted);font-weight:600">Em aberto neste cartão</div></div><div class="v num" style="color:var(--neg)">${brl(open)}</div></div>
+    <p class="hint">Quer registrar o pagamento desta fatura agora? Isso cria a saída em conta e marca os lançamentos como pagos (sem contar duas vezes).</p>`:''}
+    <div class="sheet-actions" style="margin-top:12px">
+      ${open>0?`<button class="btn" id="ifPay">Pagar fatura agora</button>`:''}
+      <button class="btn ghost" id="ifCard">Ver cartão</button>
+      <button class="btn ghost" id="ifClose">Fechar</button>
+    </div>`);
+  const pb=$('#ifPay'); if(pb)pb.onclick=()=>openPayInvoice(cardId);
+  $('#ifCard').onclick=()=>openCardDetail(cardId);
+  $('#ifClose').onclick=closeSheet;
 }
 function importStatement(text,name){
   let added=0; const acc=S.accounts[0]?.id;
