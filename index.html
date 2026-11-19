@@ -496,7 +496,6 @@ function buckets(p,ref){
 
 /* ---------- account / card computed ---------- */
 function accountBalance(a){
-  if(a.extId && typeof a.reported==='number') return a.reported;
   let b=a.opening||0;
   S.transactions.forEach(t=>{
     if(t.account!==a.id) return;
@@ -791,7 +790,8 @@ function viewTx(){
     else if(t.account){const a=accById(t.account);key='acc:'+t.account;name=a?a.name:'Conta';color=swBg(a);}
     else{key='none';name='Sem origem';color='#8a8a8a';}
     if(!groups.has(key))groups.set(key,{name,color,isCard,items:[],out:0,inc:0});
-    const g=groups.get(key);g.items.push(t);t.type==='income'?g.inc+=t.amount:g.out+=t.amount;
+    const g=groups.get(key);g.items.push(t);
+    if(!t.transfer&&!(t.type==='expense'&&t.faturaOf)){ t.type==='income'?g.inc+=t.amount:g.out+=t.amount; }
   });
   const arr=[...groups.values()].sort((a,b)=>(b.isCard-a.isCard)||(b.out-a.out));
   const blocks=arr.map(g=>{
@@ -1568,7 +1568,7 @@ function openCofrinho(){
   const inRange=(r)=>dep.filter(d=>{const x=parseD(d.date);return x>=r.start&&x<=r.end;}).reduce((a,d)=>a+d.amount,0);
   const savedMes=inRange(range('month',now)), savedSem=inRange(semesterRange(now)), savedAno=inRange(range('year',now));
   const bar=(saved,meta)=>{ if(!meta)return `<div class="meta">${brl(saved)} guardado (sem meta)</div>`;
-    const pct=Math.min(saved/meta*100,100), done=saved>=meta;
+    const pct=Math.max(0,Math.min(saved/meta*100,100)), done=saved>=meta;
     return `<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px"><span>${brl(saved)} de ${brl(meta)}</span><span class="num" style="color:${done?'var(--pos)':'var(--muted)'}">${Math.round(pct)}%</span></div><div class="bar-mini"><span style="width:${pct}%;background:${done?'var(--pos)':'var(--accent)'}"></span></div>`; };
   const depRows=[...dep].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,20).map(d=>`<div class="tx" data-depdel="${d.id}" style="padding:10px 2px">
     <div class="mid"><div class="d">Depósito</div><div class="m">${new Intl.DateTimeFormat('pt-BR',{day:'2-digit',month:'short',year:'numeric'}).format(parseD(d.date))}</div></div>
