@@ -15,6 +15,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
 :root{
   --bg:#f5f7fa; --surface:#ffffff; --surface-2:#edf1f6; --ink:#0f1b2d; --muted:#5b6676;
@@ -2060,6 +2061,36 @@ $('#fileIn').onchange=e=>{
   rd.readAsText(f);
 };
 
+/* ---------- PDF -> imagens (lê todas as páginas, inclusive faturas grandes) ---------- */
+async function pdfToImages(dataUrl, maxPages=30){
+  if(!window.pdfjsLib)throw new Error('pdfjs indisponível');
+  try{ pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; }catch(e){}
+  const b64=(dataUrl.split(',')[1])||dataUrl;
+  const bin=atob(b64); const bytes=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
+  const pdf=await pdfjsLib.getDocument({data:bytes}).promise;
+  const n=Math.min(pdf.numPages,maxPages);
+  const imgs=[];
+  for(let p=1;p<=n;p++){
+    const page=await pdf.getPage(p);
+    const base=page.getViewport({scale:1});
+    const scale=Math.min(2, 1100/base.width);
+    const vp=page.getViewport({scale});
+    const canvas=document.createElement('canvas'); canvas.width=Math.round(vp.width); canvas.height=Math.round(vp.height);
+    await page.render({canvasContext:canvas.getContext('2d'),viewport:vp}).promise;
+    imgs.push(canvas.toDataURL('image/jpeg',0.72).split(',')[1]);
+    canvas.width=canvas.height=0;
+    const st=$('#readProg'); if(st)st.textContent=`Preparando página ${p} de ${n}…`;
+  }
+  return imgs;
+}
+async function buildParsePayload(dataUrl, tipo){
+  // tenta converter as páginas em imagens (robusto p/ PDFs grandes); se falhar, manda o PDF cru
+  let payload=null;
+  try{ const imgs=await pdfToImages(dataUrl); if(imgs&&imgs.length)payload=tipo==='extrato'?{images:imgs,tipo:'extrato'}:{images:imgs}; }catch(e){ console.warn('rasterize falhou, usando PDF cru:',e&&e.message); }
+  if(!payload){ const b64=(dataUrl.split(',')[1])||''; payload=tipo==='extrato'?{pdf:b64,tipo:'extrato'}:{pdf:b64}; }
+  return payload;
+}
+
 /* ---------- import extrato bancário (PDF + IA) ---------- */
 function findAccountByName(name){
   const n=normName(name); if(!n)return null;
@@ -2067,11 +2098,12 @@ function findAccountByName(name){
 }
 async function importExtratoPDF(dataUrl){
   if(!aiReady()){alert('Entre com o Google (menu ≡) para a IA ler o extrato.');return;}
-  const b64=(dataUrl.split(',')[1])||'';
-  openSheet('<h2>Lendo o extrato…</h2><p class="hint">A IA está extraindo as movimentações. Isso leva alguns segundos.</p>');
+  openSheet('<h2>Lendo o extrato…</h2><p class="hint" id="readProg">Preparando as páginas…</p>');
+  const payload=await buildParsePayload(dataUrl,'extrato');
+  const pr0=$('#readProg'); if(pr0)pr0.textContent='A IA está extraindo as movimentações. Isso leva alguns segundos.';
   let data;
   try{
-    const r=await fetch(apiBase()+'/api/parse-fatura',{method:'POST',headers:await authHeaders(),body:JSON.stringify({pdf:b64,tipo:'extrato'})});
+    const r=await fetch(apiBase()+'/api/parse-fatura',{method:'POST',headers:await authHeaders(),body:JSON.stringify(payload)});
     const raw=await r.text();
     try{data=JSON.parse(raw);}catch{data=null;}
     if(!r.ok||!data){const msg=data?.error||(r.status>=500?'o servidor demorou ou a IA está ocupada. Tente de novo.':'resposta inesperada do servidor ('+r.status+')');throw new Error(msg);}
@@ -2152,11 +2184,12 @@ function applyExtrato(movs,suggested){
 /* ---------- import fatura (PDF + IA) ---------- */
 async function importFaturaPDF(dataUrl){
   if(!aiReady()){alert('Entre com o Google (menu ≡) para a IA ler a fatura.');return;}
-  const b64=(dataUrl.split(',')[1])||'';
-  openSheet('<h2>Lendo a fatura…</h2><p class="hint">A IA está extraindo as compras. Isso leva alguns segundos.</p>');
+  openSheet('<h2>Lendo a fatura…</h2><p class="hint" id="readProg">Preparando as páginas…</p>');
+  const payload=await buildParsePayload(dataUrl,'fatura');
+  const pr0=$('#readProg'); if(pr0)pr0.textContent='A IA está extraindo as compras. Isso leva alguns segundos.';
   let data;
   try{
-    const r=await fetch(apiBase()+'/api/parse-fatura',{method:'POST',headers:await authHeaders(),body:JSON.stringify({pdf:b64})});
+    const r=await fetch(apiBase()+'/api/parse-fatura',{method:'POST',headers:await authHeaders(),body:JSON.stringify(payload)});
     const raw=await r.text();
     try{ data=JSON.parse(raw); }catch{ data=null; }
     if(!r.ok||!data){
