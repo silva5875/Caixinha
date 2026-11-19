@@ -199,6 +199,23 @@ input,select{font-family:inherit;font-size:16px}
 .chip.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
 .subtotal{display:flex;justify-content:space-between;align-items:baseline;padding:16px;border-radius:14px;background:var(--surface-2);margin-bottom:6px}
 .subtotal .v{font-family:"Space Grotesk";font-weight:700;font-size:26px}
+/* telas estreitas (iPhone SE / Androids pequenos): evita cortar o cabeçalho e estourar números grandes */
+@media (max-width:380px){
+  .hero .bal{font-size:30px}
+  .subtotal .v{font-size:21px}
+  .toplbl{max-width:64px;font-size:11px}
+  .chev{width:24px}
+  .toptoggle{padding:4px 6px;font-size:11px}
+  .iconbtn{width:34px;height:34px;font-size:15px}
+  .flows{gap:8px}
+  .flow{padding:10px}
+  .flow .v{font-size:17px}
+  .app{padding:0 12px 130px}
+}
+@media (max-width:330px){
+  .hero .bal{font-size:26px}
+  .brand small{display:none}
+}
 .hidden{display:none!important}
 .file{display:none}
 </style>
