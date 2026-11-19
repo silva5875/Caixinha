@@ -342,6 +342,7 @@ function seedEmpty(){
     subscriptions:[],
     fixos:[],
     renda:[],
+    deletedExt:[],
     budgets:{},
     goals:[],
     spendGoal:0,
@@ -427,6 +428,7 @@ function sanitizeState(raw){
     day:_day(f.day,5),account:accIds.has(f.account)?f.account:null,
     active:f.active!==false,since:/^\d{4}-\d{2}$/.test(f.since||'')?f.since:null
   }));
+  out.deletedExt=(Array.isArray(raw.deletedExt)?raw.deletedExt:[]).slice(0,5000).map(x=>_str(x,200)).filter(Boolean);
   return out;
 }
 const catById=id=>S.categories.find(c=>c.id===id);
@@ -501,18 +503,10 @@ function accountBalance(a){
   });
   return b;
 }
-function invoiceCycle(card,ref=new Date()){
-  // current open invoice based on closing day
-  const close=Math.min(Math.max(card.closingDay||1,1),28);
-  const r=new Date(ref); let start,end;
-  if(r.getDate()>close){ start=new Date(r.getFullYear(),r.getMonth(),close+1); end=new Date(r.getFullYear(),r.getMonth()+1,close); }
-  else { start=new Date(r.getFullYear(),r.getMonth()-1,close+1); end=new Date(r.getFullYear(),r.getMonth(),close); }
-  return{start:sod(start),end:eod(end)};
-}
 function cardInvoice(card){
-  const{start,end}=invoiceCycle(card);
+  // saldo devedor real: tudo que foi gasto no cartão, ainda não pago e não previsto (inclui ciclos anteriores)
   let sum=0;
-  S.transactions.forEach(t=>{ if(t.card===card.id&&t.type==='expense'&&!t.paid&&!t.previsto){const d=parseD(t.date);if(d>=start&&d<=end)sum+=t.amount;} });
+  S.transactions.forEach(t=>{ if(t.card===card.id&&t.type==='expense'&&!t.paid&&!t.previsto)sum+=t.amount; });
   return sum;
 }
 
@@ -834,6 +828,7 @@ function fixosMensal(){ return (S.fixos||[]).filter(f=>f.active!==false).reduce(
 function materializeFixos(){
   if(!S.fixos||!S.fixos.length)return false;
   const have=new Set(S.transactions.map(t=>t.extId).filter(Boolean));
+  (S.deletedExt||[]).forEach(x=>have.add(x));
   const now=new Date(), curY=now.getFullYear(), curM=now.getMonth();
   let added=0;
   S.fixos.forEach(f=>{
@@ -860,6 +855,7 @@ function materializeFixos(){
 function materializeRenda(){
   if(!S.renda||!S.renda.length)return false;
   const have=new Set(S.transactions.map(t=>t.extId).filter(Boolean));
+  (S.deletedExt||[]).forEach(x=>have.add(x));
   const now=new Date(), curY=now.getFullYear(), curM=now.getMonth();
   let added=0;
   S.renda.forEach(f=>{
@@ -1282,7 +1278,7 @@ function openTx(id){
     }
     save();closeSheet();render();
   };
-  if(t)$('#delTx').onclick=()=>{S.transactions=S.transactions.filter(x=>x.id!==t.id);save();closeSheet();render();};
+  if(t)$('#delTx').onclick=()=>{if(t.extId){S.deletedExt=S.deletedExt||[];if(!S.deletedExt.includes(t.extId))S.deletedExt.push(t.extId);}S.transactions=S.transactions.filter(x=>x.id!==t.id);save();closeSheet();render();};
   setTimeout(()=>$('#fAmt').focus(),120);
 }
 
@@ -1409,22 +1405,20 @@ function openAccountDetail(id){
 }
 function openCardDetail(id){
   const c=cardById(id);if(!c)return;
-  const {start,end}=invoiceCycle(c);
-  const items=S.transactions.filter(t=>t.card===c.id&&t.type==='expense'&&parseD(t.date)>=start&&parseD(t.date)<=end).sort((a,b)=>b.date.localeCompare(a.date));
+  const items=S.transactions.filter(t=>t.card===c.id&&t.type==='expense'&&!t.paid&&!t.previsto).sort((a,b)=>b.date.localeCompare(a.date));
   const used=items.reduce((s,t)=>s+t.amount,0);
-  const prevCount=items.filter(t=>t.previsto).length;
+  const prevCount=S.transactions.filter(t=>t.card===c.id&&t.type==='expense'&&t.previsto).length;
   const pct=c.limit?Math.min(used/c.limit*100,100):0;
   const avail=c.limit?Math.max(c.limit-used,0):null;
-  const fmt=d=>new Intl.DateTimeFormat('pt-BR',{day:'2-digit',month:'short'}).format(d).replace('.','');
   openSheet(`
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
       <div class="swatch" style="background:${swBg(c)};color:${swFg(c)}">${esc((c.name||'?')[0].toUpperCase())}</div>
       <div><h2 style="margin:0;font-size:18px">${esc(c.name)}</h2>
-        <div class="hint" style="margin:0">Fatura aberta · ${fmt(start)} a ${fmt(end)}</div></div>
+        <div class="hint" style="margin:0">Em aberto (tudo não pago)</div></div>
     </div>
     <div class="subtotal" style="margin-bottom:10px">
-      <div><div style="font-size:12px;color:var(--muted);font-weight:600">Total da fatura</div>
-        <div style="font-size:12px;color:var(--muted);margin-top:4px">${items.length} lançamento(s)${prevCount?' · '+prevCount+' previsto(s)':''}</div></div>
+      <div><div style="font-size:12px;color:var(--muted);font-weight:600">Total em aberto</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:4px">${items.length} lançamento(s)${prevCount?' · '+prevCount+' parcela(s) futura(s)':''}</div></div>
       <div class="v num" style="color:var(--neg)">${brl(used)}</div></div>
     ${c.limit?`<div class="bar-mini"><span class="${pct>85?'warn':''}" style="width:${pct}%"></span></div>
     <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin:6px 2px 0">
@@ -1433,9 +1427,9 @@ function openCardDetail(id){
       ${c.closingDay?`<span>Fecha dia <b style="color:var(--ink)">${c.closingDay}</b></span>`:''}
       ${c.dueDay?`<span>Vence dia <b style="color:var(--ink)">${c.dueDay}</b></span>`:''}
     </div>
-    <div class="sec-h" style="margin:14px 2px 6px"><h2 style="font-size:14px">Lançamentos da fatura</h2></div>
+    <div class="sec-h" style="margin:14px 2px 6px"><h2 style="font-size:14px">Lançamentos em aberto</h2></div>
     <div style="max-height:40vh;overflow:auto;border:1px solid var(--line);border-radius:12px;padding:2px 12px">
-      ${items.length?items.map(txRow).join(''):'<div class="hint" style="padding:14px 2px">Nenhum lançamento nesta fatura.</div>'}
+      ${items.length?items.map(txRow).join(''):'<div class="hint" style="padding:14px 2px">Nenhum lançamento em aberto.</div>'}
     </div>
     ${used>0?`<button class="btn block" id="cdPay" style="margin-top:14px">Pagar fatura · ${brl(used)}</button>`:''}
     <div class="sheet-actions" style="margin-top:10px"><button class="btn ghost" id="cdEdit">Editar cartão</button><button class="btn ghost" id="cdClose">Fechar</button></div>
@@ -1447,8 +1441,7 @@ function openCardDetail(id){
 }
 function openPayInvoice(cardId){
   const c=cardById(cardId); if(!c)return;
-  const {start,end}=invoiceCycle(c);
-  const items=S.transactions.filter(t=>t.card===c.id&&t.type==='expense'&&!t.paid&&!t.previsto&&parseD(t.date)>=start&&parseD(t.date)<=end);
+  const items=S.transactions.filter(t=>t.card===c.id&&t.type==='expense'&&!t.paid&&!t.previsto);
   const total=items.reduce((s,t)=>s+t.amount,0);
   if(total<=0){alert('Não há fatura em aberto neste cartão.');return;}
   if(!S.accounts.length){alert('Cadastre uma conta antes de pagar a fatura.');return;}
@@ -1972,6 +1965,7 @@ function applyExtrato(movs,suggested){
   const outOther=S.categories.find(c=>c.kind==='expense'&&c.name==='Outros')?.id;
   const inOther=S.categories.find(c=>c.kind==='income'&&c.name==='Outros')?.id;
   const have=new Set(S.transactions.map(t=>t.extId).filter(Boolean));
+  (S.deletedExt||[]).forEach(x=>have.add(x));
   const slug=s=>String(s).toLowerCase().replace(/[^a-z0-9]+/g,'').slice(0,22);
   const assinCat=S.categories.find(c=>c.kind==='expense'&&c.name==='Assinaturas')?.id;
   const existing=S.transactions.slice(); // valida contra o que já existia antes desta importação
@@ -2096,6 +2090,7 @@ function applyFatura(compras,suggested,vencimento){
   const outOther=S.categories.find(c=>c.kind==='expense'&&c.name==='Outros')?.id;
   const assinCat=S.categories.find(c=>c.kind==='expense'&&c.name==='Assinaturas')?.id;
   const have=new Set(S.transactions.map(t=>t.extId).filter(Boolean));
+  (S.deletedExt||[]).forEach(x=>have.add(x));
   const existing=S.transactions.slice();
   const slug=s=>String(s).toLowerCase().replace(/[^a-z0-9]+/g,'').slice(0,18);
   let realN=0, prevN=0, subN=0, dupN=0;
