@@ -393,6 +393,7 @@ function sanitizeState(raw){
     if(t.paid)o.paid=true;
     if(t.faturaOf)o.faturaOf=_str(t.faturaOf,64);
     if(t.transfer)o.transfer=true;
+    if(t.transferId)o.transferId=_str(t.transferId,64);
     if(Array.isArray(t.tags)&&t.tags.length)o.tags=t.tags.map(x=>_str(x,30)).map(x=>x.trim()).filter(Boolean).slice(0,10);
     if(t.receipt)o.receipt=_str(t.receipt,200);
     return o;
@@ -420,7 +421,7 @@ function sanitizeState(raw){
   out.spendGoal=Math.max(0,_num(raw.spendGoal));
   const cof=raw.cofrinho&&typeof raw.cofrinho==='object'?raw.cofrinho:{};
   out.cofrinho={
-    deposits:(Array.isArray(cof.deposits)?cof.deposits:[]).slice(0,4000).map(d=>({id:_str(d.id,64)||uid(),date:_date(d.date),amount:_num(d.amount)})).filter(d=>d.amount!==0),
+    deposits:(Array.isArray(cof.deposits)?cof.deposits:[]).slice(0,4000).map(d=>{const o={id:_str(d.id,64)||uid(),date:_date(d.date),amount:_num(d.amount)};if(d.transferId)o.transferId=_str(d.transferId,64);return o;}).filter(d=>d.amount!==0),
     metaMes:Math.max(0,_num(cof.metaMes)),metaSemestre:Math.max(0,_num(cof.metaSemestre)),metaAno:Math.max(0,_num(cof.metaAno))
   };
   out.renda=(Array.isArray(raw.renda)?raw.renda:[]).slice(0,200).map(f=>({
@@ -893,10 +894,15 @@ function isDuplicate(amount,dateStr,desc,type,list,src){
     const dd=Math.abs(parseD(t.date).getTime()-d0)/86400000;
     if(dd>3)return false;
     const tn=normName(t.desc);
-    if(!nd||!tn)return true; // sem nome: casa por valor+data
+    if(!nd||!tn)return true; // sem nome dos dois lados: casa por valor+data
     if(tn===nd||tn.includes(nd)||nd.includes(tn))return true;
-    const a=tn.split(' ').filter(w=>w.length>2), b=new Set(nd.split(' ').filter(w=>w.length>2));
-    return a.some(w=>b.has(w));
+    // correspondência forte: >=2 palavras significativas em comum e >=60% de sobreposição
+    const aw=tn.split(' ').filter(w=>w.length>2);
+    const bw=nd.split(' ').filter(w=>w.length>2);
+    if(!aw.length||!bw.length)return false;
+    const bs=new Set(bw);
+    const shared=aw.filter(w=>bs.has(w)).length;
+    return shared>=2 && shared/Math.min(aw.length,bw.length)>=0.6;
   });
 }
 
@@ -1200,22 +1206,41 @@ function openTransfer(){
     if(from===to){alert('Escolha origem e destino diferentes.');return;}
     if(!S.cofrinho)S.cofrinho={deposits:[],metaMes:0,metaSemestre:0,metaAno:0};
     const accName=id=>accById(id)?.name||'conta';
+    const tid=uid();
     if(from.startsWith('acc:')&&to.startsWith('acc:')){
       const s=from.slice(4),d=to.slice(4);
-      S.transactions.push({id:uid(),type:'expense',amount:amt,desc:'Transferência para '+accName(d),categoryId:null,date,account:s,card:null,subId:null,transfer:true});
-      S.transactions.push({id:uid(),type:'income',amount:amt,desc:'Transferência de '+accName(s),categoryId:null,date,account:d,card:null,subId:null,transfer:true});
+      S.transactions.push({id:uid(),type:'expense',amount:amt,desc:'Transferência para '+accName(d),categoryId:null,date,account:s,card:null,subId:null,transfer:true,transferId:tid});
+      S.transactions.push({id:uid(),type:'income',amount:amt,desc:'Transferência de '+accName(s),categoryId:null,date,account:d,card:null,subId:null,transfer:true,transferId:tid});
     } else if(from.startsWith('acc:')&&to==='cofrinho'){
-      S.transactions.push({id:uid(),type:'expense',amount:amt,desc:'Transferência para cofrinho',categoryId:null,date,account:from.slice(4),card:null,subId:null,transfer:true});
-      S.cofrinho.deposits.push({id:uid(),date,amount:amt});
+      S.transactions.push({id:uid(),type:'expense',amount:amt,desc:'Transferência para cofrinho',categoryId:null,date,account:from.slice(4),card:null,subId:null,transfer:true,transferId:tid});
+      S.cofrinho.deposits.push({id:uid(),date,amount:amt,transferId:tid});
     } else if(from==='cofrinho'&&to.startsWith('acc:')){
-      S.transactions.push({id:uid(),type:'income',amount:amt,desc:'Resgate do cofrinho',categoryId:null,date,account:to.slice(4),card:null,subId:null,transfer:true});
-      S.cofrinho.deposits.push({id:uid(),date,amount:-amt});
+      S.transactions.push({id:uid(),type:'income',amount:amt,desc:'Resgate do cofrinho',categoryId:null,date,account:to.slice(4),card:null,subId:null,transfer:true,transferId:tid});
+      S.cofrinho.deposits.push({id:uid(),date,amount:-amt,transferId:tid});
     } else { alert('Transferência inválida.'); return; }
     save(); closeSheet(); render();
   };
 }
+function deleteTransfer(tid){
+  if(!tid)return;
+  S.transactions=S.transactions.filter(x=>x.transferId!==tid);
+  if(S.cofrinho&&Array.isArray(S.cofrinho.deposits)) S.cofrinho.deposits=S.cofrinho.deposits.filter(d=>d.transferId!==tid);
+  save(); closeSheet(); render();
+}
 function openTx(id){
   const t=id?S.transactions.find(x=>x.id===id):null;
+  // transferências não são editadas campo a campo (têm duas pernas ligadas); oferecemos excluir a transferência inteira
+  if(t&&t.transfer){
+    openSheet(`<h2>Transferência</h2>
+      <div class="subtotal"><div><div style="font-size:12px;color:var(--muted);font-weight:600">${esc(t.desc||'Transferência')}</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:4px">${new Intl.DateTimeFormat('pt-BR',{dateStyle:'medium'}).format(parseD(t.date))}</div></div>
+        <div class="v num">${brl(t.amount)}</div></div>
+      <p class="hint">Transferências são lançadas em duas pontas ligadas. Para mudar o valor, exclua e refaça pelo menu ≡ → Transferência.</p>
+      <div class="sheet-actions"><button class="btn ghost" id="trDelCancel">Fechar</button><button class="btn" id="trDelOk">Excluir transferência</button></div>`);
+    $('#trDelCancel').onclick=closeSheet;
+    $('#trDelOk').onclick=()=>{ if(!confirm('Excluir esta transferência inteira (as duas pontas)?'))return; if(t.transferId)deleteTransfer(t.transferId); else {S.transactions=S.transactions.filter(x=>x.id!==t.id);save();closeSheet();render();} };
+    return;
+  }
   const type=t?t.type:'expense';
   openSheet(`
     <h2>${t?'Editar lançamento':'Novo lançamento'}</h2>
@@ -1567,7 +1592,15 @@ function openCofrinho(){
   $('#cofBack').onclick=openMenu;
   $('#cofAdd').onclick=openCofrinhoAdd;
   $('#cofMetas').onclick=openCofrinhoMetas;
-  $$('[data-depdel]').forEach(el=>el.onclick=()=>{ if(!confirm('Remover este depósito do cofrinho?'))return; S.cofrinho.deposits=S.cofrinho.deposits.filter(x=>x.id!==el.dataset.depdel); save(); openCofrinho(); });
+  $$('[data-depdel]').forEach(el=>el.onclick=()=>{
+    const d=(S.cofrinho.deposits||[]).find(x=>x.id===el.dataset.depdel);
+    if(d&&d.transferId){ if(!confirm('Este valor veio de uma transferência. Remover a transferência inteira (volta pro caixa)?'))return;
+      S.transactions=S.transactions.filter(x=>x.transferId!==d.transferId);
+      S.cofrinho.deposits=S.cofrinho.deposits.filter(x=>x.transferId!==d.transferId);
+      save(); openCofrinho(); return; }
+    if(!confirm('Remover este depósito do cofrinho?'))return;
+    S.cofrinho.deposits=S.cofrinho.deposits.filter(x=>x.id!==el.dataset.depdel); save(); openCofrinho();
+  });
 }
 function openCofrinhoAdd(){
   openSheet(`<h2>Guardar no cofrinho</h2>
