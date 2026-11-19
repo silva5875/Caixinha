@@ -2062,33 +2062,61 @@ $('#fileIn').onchange=e=>{
 };
 
 /* ---------- PDF -> imagens (lê todas as páginas, inclusive faturas grandes) ---------- */
-async function pdfToImages(dataUrl, maxPages=30){
+async function pdfToImages(dataUrl, maxPages=16){
   if(!window.pdfjsLib)throw new Error('pdfjs indisponível');
   try{ pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; }catch(e){}
   const b64=(dataUrl.split(',')[1])||dataUrl;
   const bin=atob(b64); const bytes=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
   const pdf=await pdfjsLib.getDocument({data:bytes}).promise;
   const n=Math.min(pdf.numPages,maxPages);
+  // quanto mais páginas, menor a resolução (p/ caber no tempo do servidor)
+  const targetW = n>10 ? 720 : (n>5 ? 840 : 960);
+  const quality = n>10 ? 0.55 : 0.6;
   const imgs=[];
   for(let p=1;p<=n;p++){
     const page=await pdf.getPage(p);
     const base=page.getViewport({scale:1});
-    const scale=Math.min(2, 1100/base.width);
+    const scale=Math.min(1.5, targetW/base.width);
     const vp=page.getViewport({scale});
     const canvas=document.createElement('canvas'); canvas.width=Math.round(vp.width); canvas.height=Math.round(vp.height);
     await page.render({canvasContext:canvas.getContext('2d'),viewport:vp}).promise;
-    imgs.push(canvas.toDataURL('image/jpeg',0.72).split(',')[1]);
+    imgs.push(canvas.toDataURL('image/jpeg',quality).split(',')[1]);
     canvas.width=canvas.height=0;
     const st=$('#readProg'); if(st)st.textContent=`Preparando página ${p} de ${n}…`;
   }
   return imgs;
 }
-async function buildParsePayload(dataUrl, tipo){
-  // tenta converter as páginas em imagens (robusto p/ PDFs grandes); se falhar, manda o PDF cru
-  let payload=null;
-  try{ const imgs=await pdfToImages(dataUrl); if(imgs&&imgs.length)payload=tipo==='extrato'?{images:imgs,tipo:'extrato'}:{images:imgs}; }catch(e){ console.warn('rasterize falhou, usando PDF cru:',e&&e.message); }
-  if(!payload){ const b64=(dataUrl.split(',')[1])||''; payload=tipo==='extrato'?{pdf:b64,tipo:'extrato'}:{pdf:b64}; }
-  return payload;
+// remove lixo antes do %PDF- e depois do %%EOF (alguns apps exportam PDF corrompido com bytes nulos no início)
+function sanitizePdfB64(dataUrl){
+  let b64=(dataUrl.split(',')[1])||dataUrl;
+  try{
+    const bin=atob(b64);
+    const start=bin.indexOf('%PDF-');
+    if(start<0)return b64;
+    let end=bin.lastIndexOf('%%EOF');
+    end=end<0?bin.length:end+5;
+    if(start===0&&end>=bin.length-2)return b64;
+    return btoa(bin.slice(start,end));
+  }catch(e){ return b64; }
+}
+// lê fatura/extrato: tenta o PDF limpo (rápido); se falhar, cai para páginas em imagens
+async function parseDocument(dataUrl, tipo){
+  const clean=sanitizePdfB64(dataUrl);
+  const send=async(payload)=>{
+    const r=await fetch(apiBase()+'/api/parse-fatura',{method:'POST',headers:await authHeaders(),body:JSON.stringify(payload)});
+    const raw=await r.text(); let d; try{d=JSON.parse(raw);}catch{d=null;}
+    return {r,d};
+  };
+  let {r,d}=await send(tipo==='extrato'?{pdf:clean,tipo:'extrato'}:{pdf:clean});
+  if(r.ok&&d)return d;
+  // fallback: converte páginas em imagens (ajuda em PDFs que a IA não lê direto)
+  const pr=$('#readProg'); if(pr)pr.textContent='Tentando outra forma de leitura…';
+  try{
+    const imgs=await pdfToImages('data:application/pdf;base64,'+clean);
+    if(imgs&&imgs.length){ const res=await send(tipo==='extrato'?{images:imgs,tipo:'extrato'}:{images:imgs}); if(res.r.ok&&res.d)return res.d; r=res.r; d=res.d; }
+  }catch(e){}
+  const msg=(d&&d.error)||(r.status>=500?'o servidor demorou ou a IA está ocupada. Tente de novo em instantes.':'resposta inesperada do servidor ('+r.status+')');
+  throw new Error(msg);
 }
 
 /* ---------- import extrato bancário (PDF + IA) ---------- */
@@ -2098,16 +2126,10 @@ function findAccountByName(name){
 }
 async function importExtratoPDF(dataUrl){
   if(!aiReady()){alert('Entre com o Google (menu ≡) para a IA ler o extrato.');return;}
-  openSheet('<h2>Lendo o extrato…</h2><p class="hint" id="readProg">Preparando as páginas…</p>');
-  const payload=await buildParsePayload(dataUrl,'extrato');
-  const pr0=$('#readProg'); if(pr0)pr0.textContent='A IA está extraindo as movimentações. Isso leva alguns segundos.';
+  openSheet('<h2>Lendo o extrato…</h2><p class="hint" id="readProg">A IA está extraindo as movimentações. Isso leva alguns segundos.</p>');
   let data;
-  try{
-    const r=await fetch(apiBase()+'/api/parse-fatura',{method:'POST',headers:await authHeaders(),body:JSON.stringify(payload)});
-    const raw=await r.text();
-    try{data=JSON.parse(raw);}catch{data=null;}
-    if(!r.ok||!data){const msg=data?.error||(r.status>=500?'o servidor demorou ou a IA está ocupada. Tente de novo.':'resposta inesperada do servidor ('+r.status+')');throw new Error(msg);}
-  }catch(err){alert('Não consegui ler o extrato: '+err.message);closeSheet();return;}
+  try{ data=await parseDocument(dataUrl,'extrato'); }
+  catch(err){ alert('Não consegui ler o extrato: '+err.message); closeSheet(); return; }
   const movs=(data.lancamentos||[]).filter(m=>m.valor>0);
   if(!movs.length){alert('A IA não encontrou movimentações nesse PDF. Tente outro extrato.');closeSheet();return;}
   extratoPreview(movs,data.banco);
@@ -2184,19 +2206,10 @@ function applyExtrato(movs,suggested){
 /* ---------- import fatura (PDF + IA) ---------- */
 async function importFaturaPDF(dataUrl){
   if(!aiReady()){alert('Entre com o Google (menu ≡) para a IA ler a fatura.');return;}
-  openSheet('<h2>Lendo a fatura…</h2><p class="hint" id="readProg">Preparando as páginas…</p>');
-  const payload=await buildParsePayload(dataUrl,'fatura');
-  const pr0=$('#readProg'); if(pr0)pr0.textContent='A IA está extraindo as compras. Isso leva alguns segundos.';
+  openSheet('<h2>Lendo a fatura…</h2><p class="hint" id="readProg">A IA está extraindo as compras. Isso leva alguns segundos.</p>');
   let data;
-  try{
-    const r=await fetch(apiBase()+'/api/parse-fatura',{method:'POST',headers:await authHeaders(),body:JSON.stringify(payload)});
-    const raw=await r.text();
-    try{ data=JSON.parse(raw); }catch{ data=null; }
-    if(!r.ok||!data){
-      const msg = data?.error || (r.status>=500 ? 'o servidor demorou ou a IA está ocupada. Tente de novo em instantes.' : ('resposta inesperada do servidor ('+r.status+')'));
-      throw new Error(msg);
-    }
-  }catch(err){alert('Não consegui ler a fatura: '+err.message);closeSheet();return;}
+  try{ data=await parseDocument(dataUrl,'fatura'); }
+  catch(err){ alert('Não consegui ler a fatura: '+err.message); closeSheet(); return; }
   const compras=(data.compras||[]).filter(c=>c.valor_parcela>0);
   if(!compras.length){alert('A IA não encontrou compras nesse PDF. Tente outra fatura.');closeSheet();return;}
   faturaPreview(data);
