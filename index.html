@@ -544,7 +544,7 @@ function byCategory(list,kind){
   const m=new Map();
   list.filter(t=>t.type===kind).forEach(t=>{
     const c=catById(t.categoryId); const k=c?c.id:'none';
-    const cur=m.get(k)||{name:c?c.name:'Sem categoria',color:c?c.color:'#888',total:0};
+    const cur=m.get(k)||{id:k,name:c?c.name:'Sem categoria',color:c?c.color:'#888',total:0};
     cur.total+=t.amount; m.set(k,cur);
   });
   return [...m.values()].sort((a,b)=>b.total-a.total);
@@ -831,7 +831,8 @@ function drawOverviewCharts(){
     charts.donut=new Chart(dc,{type:'doughnut',data:{labels:cats.map(c=>c.name),datasets:[{data:cats.map(c=>c.total),backgroundColor:cats.map(c=>c.color),borderWidth:0,hoverOffset:6}]},
       options:{cutout:'70%',plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>' '+brl(c.raw)}}},responsive:true,maintainAspectRatio:false}});
     const tot=cats.reduce((s,c)=>s+c.total,0);
-    $('#legend').innerHTML=cats.map(c=>`<div class="legrow"><span class="dot" style="background:${c.color}"></span><span class="nm">${esc(c.name)}</span><span class="pc num">${tot?Math.round(c.total/tot*100):0}%</span><span class="amt num">${brl(c.total)}</span></div>`).join('');
+    $('#legend').innerHTML=cats.map(c=>`<div class="legrow" data-catsum="${c.id}" style="cursor:pointer"><span class="dot" style="background:${c.color}"></span><span class="nm">${esc(c.name)}</span><span class="pc num">${tot?Math.round(c.total/tot*100):0}%</span><span class="amt num">${brl(c.total)}</span><span style="color:var(--muted);font-size:13px;margin-left:4px">›</span></div>`).join('');
+    $$('#legend [data-catsum]').forEach(el=>el.onclick=()=>openCategorySummary(el.dataset.catsum));
   } else if(dc){ $('#legend').innerHTML='<div class="hint" style="text-align:center">Nenhum gasto categorizado neste período.</div>'; }
 
   const bc=$('#bars');
@@ -2255,6 +2256,29 @@ function openReportYear(){
     const txt=`Relatório ${y}\nEntrou: ${brl(inc)}\nSaiu: ${brl(exp)}\nSaldo: ${brl(inc-exp)}\n\nGasto por mês:\n`+byMonth.map((v,i)=>`- ${nm[i]}: ${brl(v)}`).join('\n')+`\n\nTop categorias:\n`+cats.map(c=>`- ${c.name}: ${brl(c.total)} (${Math.round(c.total/totExp*100)}%)`).join('\n');
     (navigator.clipboard&&navigator.clipboard.writeText?navigator.clipboard.writeText(txt).then(()=>alert('Resumo copiado.')).catch(()=>alert('Não consegui copiar.')):alert('Cópia não suportada.'));
   };
+}
+function openCategorySummary(catId){
+  const c = catId==='none'?null:catById(catId);
+  const spend=txInRange().filter(t=>t.type==='expense'&&!t.transfer&&!t.faturaOf);
+  const list=spend.filter(t=> catId==='none' ? !catById(t.categoryId) : t.categoryId===catId).sort((a,b)=>b.date.localeCompare(a.date));
+  const total=list.reduce((s,t)=>s+t.amount,0);
+  const periodTotal=spend.reduce((s,t)=>s+t.amount,0)||1;
+  const pct=Math.round(total/periodTotal*100);
+  const avg=list.length?total/list.length:0;
+  const color=c?c.color:'#8a8a8a';
+  const name=c?c.name:'Sem categoria';
+  const quando=periodLabelShort(ui.period,ui.ref);
+  openSheet(`<h2>${esc(name)}</h2>
+    <section class="card hero" style="padding:18px;margin-bottom:12px;border-left:4px solid ${color}">
+      <div class="cap">Gasto em ${esc(quando)}</div>
+      <div class="bal num neg" style="font-size:30px">${brl(total)}</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:4px">${list.length} lançamento(s) · ${pct}% dos gastos do período · média ${brl(avg)}</div>
+    </section>
+    <div class="sec-h" style="margin:4px 2px 6px"><h2 style="font-size:13px">Lançamentos</h2></div>
+    <section class="card" style="padding:4px 16px"><div class="list">${list.map(txRow).join('')||emptyInline('Nada nesta categoria no período')}</div></section>
+    <button class="btn ghost block" id="csBack" style="margin-top:12px">Fechar</button>`);
+  $('#csBack').onclick=closeSheet;
+  $$('[data-edit]',sheet).forEach(el=>el.onclick=()=>openTx(el.dataset.edit));
 }
 function openBudgets(){
   const exp=S.categories.filter(c=>c.kind==='expense');
