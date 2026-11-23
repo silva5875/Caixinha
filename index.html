@@ -163,7 +163,7 @@ input,select{font-family:inherit;font-size:16px}
 /* modal */
 .scrim{position:fixed;inset:0;background:rgba(5,12,13,.5);z-index:40;display:none;align-items:flex-end;justify-content:center}
 .scrim.open{display:flex}
-.sheet{background:var(--surface);width:100%;max-width:560px;max-height:92vh;overflow:auto;border-radius:22px 22px 0 0;padding:8px 20px calc(24px + env(safe-area-inset-bottom,0px));animation:up .22s ease}
+.sheet{background:var(--surface);width:100%;max-width:560px;max-height:92vh;overflow:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;border-radius:22px 22px 0 0;padding:8px 20px calc(24px + env(safe-area-inset-bottom,0px));animation:up .22s ease}
 @media(min-width:620px){.scrim{align-items:center}.sheet{border-radius:22px;max-height:88vh}}
 @keyframes up{from{transform:translateY(24px);opacity:.6}to{transform:none;opacity:1}}
 @media(prefers-reduced-motion:reduce){.sheet{animation:none}}
@@ -1281,16 +1281,29 @@ function wireViewEvents(){
 
 /* ---------- modals ---------- */
 const scrim=$('#scrim'),sheet=$('#sheet');
+let _savedScroll=0;
+function lockBody(){
+  _savedScroll=window.scrollY||document.documentElement.scrollTop||0;
+  document.body.style.position='fixed';
+  document.body.style.top=(-_savedScroll)+'px';
+  document.body.style.left='0'; document.body.style.right='0'; document.body.style.width='100%';
+}
+function unlockBody(){
+  document.body.style.position=''; document.body.style.top=''; document.body.style.left=''; document.body.style.right=''; document.body.style.width='';
+  window.scrollTo(0,_savedScroll);
+}
 function openSheet(html){
+  const wasOpen=scrim.classList.contains('open');
   let title='';
   const m=html.match(/^\s*<h2[^>]*>([\s\S]*?)<\/h2>/);
   if(m){ title=m[1]; html=html.slice(m[0].length); }
   sheet.innerHTML='<div class="sheet-top"><button class="sheet-back" id="sheetBack" aria-label="Voltar">'+svgIcon('back',18)+'</button><div class="sheet-title">'+title+'</div></div>'+html;
+  if(!wasOpen)lockBody();
   scrim.classList.add('open');
   const b=sheet.querySelector('#sheetBack'); if(b)b.onclick=closeSheet;
   sheet.scrollTop=0;
 }
-function closeSheet(){scrim.classList.remove('open');}
+function closeSheet(){ if(scrim.classList.contains('open'))unlockBody(); scrim.classList.remove('open'); }
 scrim.onclick=e=>{if(e.target===scrim)closeSheet();};
 
 function catOptions(kind,sel){return S.categories.filter(c=>c.kind===kind).map(c=>`<option value="${c.id}" ${c.id===sel?'selected':''}>${esc(c.name)}</option>`).join('');}
