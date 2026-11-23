@@ -363,6 +363,7 @@ function seedEmpty(){
     renda:[],
     deletedExt:[],
     partnerName:'',
+    notifOff:false,
     splits:[],
     budgets:{},
     goals:[],
@@ -455,6 +456,7 @@ function sanitizeState(raw){
   }));
   out.deletedExt=(Array.isArray(raw.deletedExt)?raw.deletedExt:[]).slice(0,5000).map(x=>_str(x,200)).filter(Boolean);
   out.partnerName=_str(raw.partnerName,60);
+  out.notifOff=!!raw.notifOff;
   out.splits=(Array.isArray(raw.splits)?raw.splits:[]).slice(0,3000).map(s=>{
     if(s.kind==='settle')return {id:_str(s.id,64)||uid(),kind:'settle',date:_date(s.date),amount:Math.abs(_num(s.amount)),dir:_enum(s.dir,['partner_to_me','me_to_partner'],'partner_to_me')};
     return {id:_str(s.id,64)||uid(),kind:'exp',date:_date(s.date),desc:_str(s.desc,120),total:Math.abs(_num(s.total)),payer:_enum(s.payer,['me','partner'],'me'),myShare:Math.max(0,_num(s.myShare)),partnerShare:Math.max(0,_num(s.partnerShare))};
@@ -1610,6 +1612,7 @@ function openMenu(){
     <button class="menu-item" id="mExportCsv"><span class="mi">▦</span><div>Exportar tudo (CSV)<small>todos os lançamentos</small></div></button>
     <button class="menu-item" id="mImportJson"><span class="mi">↑</span><div>Restaurar backup<small>carrega um .json salvo antes</small></div></button>
     <button class="menu-item" id="mImportCsv"><span class="mi">≣</span><div>Importar extrato<small>PDF (a IA lê) · ou CSV/OFX</small></div></button>
+    <button class="menu-item" id="mReminders"><span class="mi">◔</span><div>Lembretes de vencimento<small>${S.notifOff?'desligados — tocar para ligar':'ligados — tocar para desligar'}</small></div></button>
     <button class="menu-item" id="mTheme"><span class="mi">◐</span><div>Tema claro / escuro<small>alternar aparência</small></div></button>
     <button class="menu-item" id="mInstall"><span class="mi">⇩</span><div>Instalar app<small>ícone na tela inicial, tela cheia</small></div></button>
     <button class="menu-item" id="mNotif"><span class="mi">◔</span><div>Ativar notificações<small>avisos de fatura e assinatura</small></div></button>
@@ -1632,6 +1635,7 @@ function openMenu(){
   $('#mExportCsv').onclick=()=>exportCsv('all');
   $('#mImportJson').onclick=()=>pickFile('json');
   $('#mImportCsv').onclick=()=>pickFile('csv');
+  $('#mReminders').onclick=()=>{ S.notifOff=!S.notifOff; save(); refreshNotifs(); closeSheet(); alert(S.notifOff?'Lembretes de vencimento desligados.':'Lembretes de vencimento ligados.'); };
   $('#mTheme').onclick=()=>{toggleTheme();};
   $('#mInstall').onclick=installApp;
   $('#mNotif').onclick=enableNotifications;
@@ -1881,30 +1885,53 @@ function sharedRow(it,me,otherEmail){
     </div>${actions}</div>`;
 }
 /* ----- notificações (sino) ----- */
-let notif={count:0,invite:null,pending:[],couple:null,rejections:[],shown:false};
+let notif={count:0,invite:null,pending:[],couple:null,rejections:[],reminders:[]};
 async function loadRejections(){
   if(!sb||!authUser)return [];
   const {data,error}=await sb.from('couples').select('*').eq('member_a',authUser.id).eq('status','rejected');
   if(error){console.warn('rej',error);return [];}
   return data||[];
 }
+// lembretes recorrentes locais: fatura fechando/vencendo e gastos fixos vencendo
+function localReminders(){
+  if(S.notifOff)return [];
+  const out=[], today=new Date(); today.setHours(0,0,0,0);
+  const dUntil=day=>{let d=new Date(today.getFullYear(),today.getMonth(),Math.min(day,28));if(d<today)d=new Date(today.getFullYear(),today.getMonth()+1,Math.min(day,28));return Math.round((d-today)/86400000);};
+  S.cards.forEach(c=>{
+    if(c.closingDay){const dd=dUntil(c.closingDay); if(dd<=3)out.push({kind:'fatura_fecha',card:c,dias:dd});}
+    const inv=cardInvoice(c);
+    if(c.dueDay&&inv>0){const dd=dUntil(c.dueDay); if(dd<=5)out.push({kind:'fatura_vence',card:c,amount:inv,dias:dd});}
+  });
+  (S.fixos||[]).filter(f=>f.active!==false).forEach(f=>{ const dd=dUntil(f.day||1); if(dd<=3)out.push({kind:'fixo_vence',fixo:f,amount:f.amount,dias:dd}); });
+  out.sort((a,b)=>a.dias-b.dias);
+  return out;
+}
 async function refreshNotifs(){
-  if(!sb||!authUser){ notif.count=0;notif.invite=null;notif.pending=[];notif.couple=null;notif.rejections=[]; updateBell(); return; }
-  try{
-    const couple=await loadCouple();
-    let pending=[],invite=null;
-    if(couple){ const items=await loadItems(couple.id); pending=items.filter(it=>it.created_by!==authUser.id&&it.status==='pending'); }
-    else { invite=await loadPendingInvite(); }
-    const rejections=await loadRejections();
-    notif.couple=couple; notif.pending=pending; notif.invite=invite; notif.rejections=rejections;
-    notif.count=pending.length+(invite?1:0)+rejections.length;
-  }catch(e){ console.warn('refreshNotifs',e); }
+  notif.reminders=localReminders();
+  let pending=[],invite=null,rejections=[],couple=null;
+  if(sb&&authUser){
+    try{
+      couple=await loadCouple();
+      if(couple){ const items=await loadItems(couple.id); pending=items.filter(it=>it.created_by!==authUser.id&&it.status==='pending'); }
+      else { invite=await loadPendingInvite(); }
+      rejections=await loadRejections();
+    }catch(e){ console.warn('refreshNotifs',e); }
+  }
+  notif.couple=couple; notif.pending=pending; notif.invite=invite; notif.rejections=rejections;
+  notif.count=notif.reminders.length+pending.length+(invite?1:0)+rejections.length;
   updateBell();
-  if(notif.count>0 && !notif.shown){ notif.shown=true; openNotifications(); }
+  maybeAutoPop();
+}
+function maybeAutoPop(){
+  if(notif.count<=0)return;
+  let last=''; try{last=localStorage.getItem('caixa.notifpop')||'';}catch(e){}
+  if(last===todayStr())return;
+  try{localStorage.setItem('caixa.notifpop',todayStr());}catch(e){}
+  openNotifications();
 }
 function updateBell(){
   const b=$('#bellBtn'); if(!b)return;
-  b.style.display=(sb&&authUser)?'grid':'none';
+  b.style.display=(notif.count>0||(sb&&authUser))?'grid':'none';
   const badge=$('#bellBadge'); if(badge){ badge.style.display=notif.count>0?'grid':'none'; badge.textContent=notif.count>9?'9+':String(notif.count); }
 }
 function openNotifications(){
@@ -1919,11 +1946,42 @@ function openNotifications(){
     const desc=it.kind==='settle'?('Acerto · '+brl(Number(it.amount||0))):(esc(it.descr||'Despesa')+' · '+brl(Number(it.total||0)));
     return `<section class="card" style="padding:12px 14px;margin-bottom:8px"><div style="font-weight:600;font-size:14px">${desc}</div><div class="hint" style="margin:2px 0 8px">${esc(coupleEmail)} · ${d}</div><div class="sheet-actions"><button class="btn ghost" data-nrej="${it.id}">Recusar</button><button class="btn" data-napp="${it.id}">Aprovar</button></div></section>`;
   }).join(''); }
-  if(!body)body='<div class="empty" style="padding:30px"><p>Nada pendente por aqui.</p></div>';
+  if(notif.reminders&&notif.reminders.length){
+    body+=`<div class="sec-h" style="margin:4px 2px 6px"><h2 style="font-size:13px">Lembretes</h2></div>`;
+    body+=notif.reminders.map(rm=>{
+      const dd=rm.dias, quando=dd===0?'hoje':(dd===1?'amanhã':'em '+dd+' dias');
+      if(rm.kind==='fatura_vence'){
+        const bg=swBg(rm.card), fg=swFg(rm.card);
+        return `<section class="card" style="padding:14px 16px;margin-bottom:8px;background:${bg};border:0">
+          <div style="display:flex;align-items:center;gap:10px;color:${fg}">
+            <div style="flex:1;min-width:0"><div style="font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(rm.card.name)}</div>
+              <div style="font-size:12px;opacity:.92">Fatura vence ${quando}${rm.card.dueDay?' · dia '+rm.card.dueDay:''}</div></div>
+            <div class="num" style="font-weight:700;font-size:16px;white-space:nowrap">${brl(rm.amount)}</div></div>
+          <div class="sheet-actions" style="margin-top:10px"><button class="btn" data-rpay="${rm.card.id}" style="background:${fg};color:${bg}">Pagar fatura</button></div>
+        </section>`;
+      }
+      if(rm.kind==='fatura_fecha'){
+        const bg=swBg(rm.card);
+        return `<section class="card" style="padding:12px 14px;margin-bottom:8px;border-left:4px solid ${bg}">
+          <div style="font-weight:600;font-size:14px">Fatura do ${esc(rm.card.name)} fecha ${quando}</div>
+          <div class="hint" style="margin:2px 0 8px">Quando fechar, importe a fatura para registrar as compras.</div>
+          <div class="sheet-actions"><button class="btn ghost" data-rimp="1">Importar fatura</button></div>
+        </section>`;
+      }
+      return `<section class="card" style="padding:12px 14px;margin-bottom:8px;border-left:4px solid #D99A2B">
+        <div style="display:flex;align-items:center;gap:10px"><div style="flex:1;min-width:0"><div style="font-weight:600;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(rm.fixo.name)}</div>
+          <div class="hint" style="margin:2px 0 0">Gasto fixo vence ${quando}${rm.fixo.day?' · dia '+rm.fixo.day:''}</div></div>
+          <div class="num" style="font-weight:700;white-space:nowrap">${brl(rm.amount)}</div></div>
+      </section>`;
+    }).join('');
+  }
+  if(!body)body='<div class="empty" style="padding:30px"><p>Nada por aqui. Você está em dia!</p></div>';
   openSheet(`<h2>Notificações</h2>${body}<button class="btn ghost block" id="nClose" style="margin-top:8px">Fechar</button>`);
   $('#nClose').onclick=closeSheet;
   const ia=$('#nInvAcc'); if(ia)ia.onclick=async()=>{ try{await acceptCouple(inv.id);}catch(e){alert('Erro ao aceitar: '+e.message);return;} await refreshNotifs(); openNotifications(); };
   const ir=$('#nInvRej'); if(ir)ir.onclick=async()=>{ if(!confirm('Recusar o convite de divisão?'))return; try{await sb.from('couples').update({member_b:authUser.id,b_email:(authUser.email||'').toLowerCase(),status:'rejected'}).eq('id',inv.id);}catch(e){alert('Erro: '+e.message);} await refreshNotifs(); closeSheet(); };
+  $$('[data-rpay]').forEach(el=>el.onclick=()=>openPayInvoice(el.dataset.rpay));
+  $$('[data-rimp]').forEach(el=>el.onclick=()=>pickFile('pdf'));
   $$('[data-ndismiss]').forEach(el=>el.onclick=async()=>{ try{await sb.from('couples').update({status:'dismissed'}).eq('id',el.dataset.ndismiss);}catch(e){alert('Erro: '+e.message);} await refreshNotifs(); openNotifications(); });
   $$('[data-napp]').forEach(el=>el.onclick=async()=>{ try{await approveItem(el.dataset.napp);}catch(e){alert('Erro: '+e.message);} await refreshNotifs(); openNotifications(); });
   $$('[data-nrej]').forEach(el=>el.onclick=async()=>{ if(!confirm('Recusar este item?'))return; try{await rejectItem(el.dataset.nrej);}catch(e){alert('Erro: '+e.message);} await refreshNotifs(); openNotifications(); });
@@ -2753,6 +2811,7 @@ async function enableNotifications(){
 }
 function maybeNotify(force){
   try{
+    if(S.notifOff)return;
     if(!('Notification' in window)||Notification.permission!=='granted')return;
     const alerts=computeAlerts(); if(!alerts.length)return;
     if(!force){ try{ if(localStorage.getItem('caixa.notif')===todayStr())return; }catch(e){} }
@@ -2765,6 +2824,7 @@ materializeFixos();
 materializeRenda();
 render();
 initAuth();
+refreshNotifs();
 setTimeout(maybeNotify,2000);
 </script>
 </body>
