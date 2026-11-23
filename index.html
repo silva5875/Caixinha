@@ -1881,15 +1881,23 @@ function sharedRow(it,me,otherEmail){
     </div>${actions}</div>`;
 }
 /* ----- notificações (sino) ----- */
-let notif={count:0,invite:null,pending:[],couple:null,shown:false};
+let notif={count:0,invite:null,pending:[],couple:null,rejections:[],shown:false};
+async function loadRejections(){
+  if(!sb||!authUser)return [];
+  const {data,error}=await sb.from('couples').select('*').eq('member_a',authUser.id).eq('status','rejected');
+  if(error){console.warn('rej',error);return [];}
+  return data||[];
+}
 async function refreshNotifs(){
-  if(!sb||!authUser){ notif.count=0;notif.invite=null;notif.pending=[];notif.couple=null; updateBell(); return; }
+  if(!sb||!authUser){ notif.count=0;notif.invite=null;notif.pending=[];notif.couple=null;notif.rejections=[]; updateBell(); return; }
   try{
     const couple=await loadCouple();
     let pending=[],invite=null;
     if(couple){ const items=await loadItems(couple.id); pending=items.filter(it=>it.created_by!==authUser.id&&it.status==='pending'); }
     else { invite=await loadPendingInvite(); }
-    notif.couple=couple; notif.pending=pending; notif.invite=invite; notif.count=pending.length+(invite?1:0);
+    const rejections=await loadRejections();
+    notif.couple=couple; notif.pending=pending; notif.invite=invite; notif.rejections=rejections;
+    notif.count=pending.length+(invite?1:0)+rejections.length;
   }catch(e){ console.warn('refreshNotifs',e); }
   updateBell();
   if(notif.count>0 && !notif.shown){ notif.shown=true; openNotifications(); }
@@ -1905,6 +1913,7 @@ function openNotifications(){
   const coupleEmail=notif.couple?((notif.couple.member_a===me?notif.couple.b_email:notif.couple.a_email)||'parceiro(a)'):'';
   let body='';
   if(inv){ body+=`<section class="card" style="padding:14px 16px;margin-bottom:12px;border-left:4px solid var(--pos)"><div style="font-weight:600;margin-bottom:4px">Convite de divisão</div><div class="hint" style="margin:0 0 10px">${esc(inv.a_email||'Alguém')} quer dividir despesas com você.</div><div class="sheet-actions"><button class="btn ghost" id="nInvRej">Recusar</button><button class="btn" id="nInvAcc">Aceitar</button></div></section>`; }
+  if(notif.rejections&&notif.rejections.length){ body+=notif.rejections.map(c=>`<section class="card" style="padding:14px 16px;margin-bottom:12px;border-left:4px solid var(--neg)"><div style="font-weight:600;margin-bottom:4px">Convite recusado</div><div class="hint" style="margin:0 0 10px">${esc(c.b_email||'A pessoa convidada')} recusou seu convite de divisão.</div><div class="sheet-actions"><button class="btn" data-ndismiss="${c.id}">OK</button></div></section>`).join(''); }
   if(pend.length){ body+=`<div class="sec-h" style="margin:4px 2px 6px"><h2 style="font-size:13px">Para aprovar</h2></div>`+pend.map(it=>{
     const d=new Intl.DateTimeFormat('pt-BR',{day:'2-digit',month:'short'}).format(parseD(it.date)).replace('.','');
     const desc=it.kind==='settle'?('Acerto · '+brl(Number(it.amount||0))):(esc(it.descr||'Despesa')+' · '+brl(Number(it.total||0)));
@@ -1914,7 +1923,8 @@ function openNotifications(){
   openSheet(`<h2>Notificações</h2>${body}<button class="btn ghost block" id="nClose" style="margin-top:8px">Fechar</button>`);
   $('#nClose').onclick=closeSheet;
   const ia=$('#nInvAcc'); if(ia)ia.onclick=async()=>{ try{await acceptCouple(inv.id);}catch(e){alert('Erro ao aceitar: '+e.message);return;} await refreshNotifs(); openNotifications(); };
-  const ir=$('#nInvRej'); if(ir)ir.onclick=async()=>{ try{await sb.from('couples').update({member_b:authUser.id,status:'rejected'}).eq('id',inv.id);}catch(e){} await refreshNotifs(); closeSheet(); };
+  const ir=$('#nInvRej'); if(ir)ir.onclick=async()=>{ if(!confirm('Recusar o convite de divisão?'))return; try{await sb.from('couples').update({member_b:authUser.id,b_email:(authUser.email||'').toLowerCase(),status:'rejected'}).eq('id',inv.id);}catch(e){alert('Erro: '+e.message);} await refreshNotifs(); closeSheet(); };
+  $$('[data-ndismiss]').forEach(el=>el.onclick=async()=>{ try{await sb.from('couples').update({status:'dismissed'}).eq('id',el.dataset.ndismiss);}catch(e){alert('Erro: '+e.message);} await refreshNotifs(); openNotifications(); });
   $$('[data-napp]').forEach(el=>el.onclick=async()=>{ try{await approveItem(el.dataset.napp);}catch(e){alert('Erro: '+e.message);} await refreshNotifs(); openNotifications(); });
   $$('[data-nrej]').forEach(el=>el.onclick=async()=>{ if(!confirm('Recusar este item?'))return; try{await rejectItem(el.dataset.nrej);}catch(e){alert('Erro: '+e.message);} await refreshNotifs(); openNotifications(); });
 }
