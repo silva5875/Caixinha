@@ -226,7 +226,6 @@ details.mgroup .menu-item{padding-left:14px;padding-right:14px;border-top:1px so
 }
 @media (max-width:330px){
   .hero .bal{font-size:26px}
-  .brand small{display:none}
 }
 .hidden{display:none!important}
 .file{display:none}
@@ -327,7 +326,25 @@ const SUPABASE_URL="https://vrvajpkmxwkfynsdqsut.supabase.co";
 const SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZydmFqcGtteHdrZnluc2Rxc3V0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTMzNzM1NTUsImV4cCI6MjEwODk0OTU1NX0.8fijUBUeKVaGEebjVq4VFBqoM5b6WZIknix0u53n52I";
 let sb=null, authUser=null, authToken=null, pushTimer=null;
 function hasData(st){ return !!(st && ((st.transactions&&st.transactions.length)||(st.subscriptions&&st.subscriptions.length)||(st.cards&&st.cards.length))); }
-function updateAuthUI(){ const el=document.getElementById('brandSub'); if(!el)return; el.textContent = authUser ? ('sincronizado · '+(authUser.email||'conta')) : 'seu dinheiro, claro'; }
+function updateAuthUI(){
+  const el=document.getElementById('brandSub'); if(!el)return;
+  if(authUser){
+    const nm=(S.displayName&&S.displayName.trim())?S.displayName.trim():(authUser.email||'conta');
+    el.innerHTML=`<span id="brandName" style="cursor:pointer">${esc(nm)}</span>`;
+    const bn=document.getElementById('brandName'); if(bn)bn.onclick=openProfileName;
+  } else {
+    el.innerHTML=`<button id="brandLogin" style="border:0;background:transparent;color:var(--accent);font-weight:600;font-size:11px;padding:0;cursor:pointer">Entrar e sincronizar →</button>`;
+    const bl=document.getElementById('brandLogin'); if(bl)bl.onclick=loginGoogle;
+  }
+}
+function openProfileName(){
+  openSheet(`<h2>Seu nome no app</h2>
+    <div class="field"><label>Nome curto (aparece sob "Caixa")</label><input id="pnName" maxlength="20" placeholder="Ex.: Gabriel" value="${esc(S.displayName||'')}"></div>
+    <p class="hint" style="margin:0 0 10px">Deixe em branco para mostrar seu e-mail. Até 20 caracteres.</p>
+    <div class="sheet-actions"><button class="btn ghost" id="pnCancel">Cancelar</button><button class="btn" id="pnSave">Salvar</button></div>`);
+  $('#pnCancel').onclick=closeSheet;
+  $('#pnSave').onclick=()=>{ S.displayName=($('#pnName').value||'').trim().slice(0,20); save(); updateAuthUI(); closeSheet(); };
+}
 function initAuth(){
   if(!window.supabase||!SUPABASE_URL||!SUPABASE_ANON_KEY)return;
   try{ sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY); }catch(e){ sb=null; return; }
@@ -377,6 +394,7 @@ function seedEmpty(){
     notifOff:false,
     menuUse:{},
     catMemory:{},
+    displayName:'',
     splits:[],
     budgets:{},
     goals:[],
@@ -469,6 +487,7 @@ function sanitizeState(raw){
   }));
   out.deletedExt=(Array.isArray(raw.deletedExt)?raw.deletedExt:[]).slice(0,5000).map(x=>_str(x,200)).filter(Boolean);
   out.partnerName=_str(raw.partnerName,60);
+  out.displayName=_str(raw.displayName,20);
   out.notifOff=!!raw.notifOff;
   out.menuUse={};
   if(raw.menuUse&&typeof raw.menuUse==='object'){ for(const k in raw.menuUse){ const v=parseInt(raw.menuUse[k]); if(Number.isFinite(v)&&v>0)out.menuUse[String(k).slice(0,40)]=v; } }
