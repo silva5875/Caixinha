@@ -376,6 +376,7 @@ function seedEmpty(){
     partnerName:'',
     notifOff:false,
     menuUse:{},
+    catMemory:{},
     splits:[],
     budgets:{},
     goals:[],
@@ -471,6 +472,8 @@ function sanitizeState(raw){
   out.notifOff=!!raw.notifOff;
   out.menuUse={};
   if(raw.menuUse&&typeof raw.menuUse==='object'){ for(const k in raw.menuUse){ const v=parseInt(raw.menuUse[k]); if(Number.isFinite(v)&&v>0)out.menuUse[String(k).slice(0,40)]=v; } }
+  out.catMemory={};
+  if(raw.catMemory&&typeof raw.catMemory==='object'){ for(const k in raw.catMemory){ const v=_str(raw.catMemory[k],64); if(v&&catIds.has(v))out.catMemory[String(k).slice(0,80)]=v; } }
   out.splits=(Array.isArray(raw.splits)?raw.splits:[]).slice(0,3000).map(s=>{
     if(s.kind==='settle')return {id:_str(s.id,64)||uid(),kind:'settle',date:_date(s.date),amount:Math.abs(_num(s.amount)),dir:_enum(s.dir,['partner_to_me','me_to_partner'],'partner_to_me')};
     return {id:_str(s.id,64)||uid(),kind:'exp',date:_date(s.date),desc:_str(s.desc,120),total:Math.abs(_num(s.total)),payer:_enum(s.payer,['me','partner'],'me'),myShare:Math.max(0,_num(s.myShare)),partnerShare:Math.max(0,_num(s.partnerShare))};
@@ -1378,6 +1381,7 @@ function openTx(id){
     const rec={id:t?t.id:uid(),type:curType,amount:Math.abs(amt),desc:$('#fDesc').value.trim(),
       categoryId:$('#fCat').value,date:$('#fDate').value,
       account:isCard?null:srcRaw,card:isCard?srcRaw.slice(5):null, subId:t?t.subId:null, tags, receipt:receiptPath||undefined};
+    if(rec.type==='expense'&&rec.desc&&rec.categoryId)catMemLearn(rec.desc,rec.categoryId);
     if(t){ Object.assign(t,rec); if(!receiptPath)delete t.receipt; }
     else {
       const src=isCard?'card':'account';
@@ -2401,6 +2405,33 @@ async function categorizeAI(){
     alert(n+' lançamento(s) recategorizado(s) pela IA.');
   }catch(e){ alert('Não consegui categorizar: '+e.message); closeSheet(); }
 }
+function findExpenseCatIdByName(name){
+  if(!name)return null;
+  const n=normName(name);
+  const c=S.categories.find(x=>x.kind==='expense'&&normName(x.name)===n);
+  return c?c.id:null;
+}
+function catKey(desc){ return normName(desc); }
+function catKeyShort(desc){ const t=normName(desc).split(' ').filter(w=>w.length>2); return t.length?t[0]:''; }
+function catMemLookup(desc){
+  const m=S.catMemory||{};
+  const full=m[catKey(desc)]; if(full&&catById(full))return full;
+  const sk=catKeyShort(desc); const tok=sk?m['~'+sk]:null; if(tok&&catById(tok))return tok;
+  return null;
+}
+function catMemLearn(desc,catId){
+  if(!desc||!catId)return; if(!catById(catId))return;
+  S.catMemory=S.catMemory||{};
+  S.catMemory[catKey(desc)]=catId;
+  const sk=catKeyShort(desc); if(sk)S.catMemory['~'+sk]=catId;
+}
+// resolve a melhor categoria de uma compra: memória do usuário > IA > palavra-chave > Outros
+function resolveCat(desc, aiCategoria, isSub, assinCat, outOther){
+  const mem=catMemLookup(desc); if(mem)return mem;
+  const ai=findExpenseCatIdByName(aiCategoria); if(ai)return ai;
+  if(isSub)return assinCat||outOther||null;
+  return guessCat(desc)||outOther||null;
+}
 function guessCat(name){
   if(!name)return null;
   const s=String(name).toLowerCase();
@@ -2503,7 +2534,9 @@ function sanitizePdfB64(dataUrl){
 // lê fatura/extrato: tenta o PDF limpo (rápido); se falhar, cai para páginas em imagens
 async function parseDocument(dataUrl, tipo){
   const clean=sanitizePdfB64(dataUrl);
+  const categorias=S.categories.filter(c=>c.kind==='expense').map(c=>c.name);
   const send=async(payload)=>{
+    payload.categorias=categorias;
     const r=await fetch(apiBase()+'/api/parse-fatura',{method:'POST',headers:await authHeaders(),body:JSON.stringify(payload)});
     const raw=await r.text(); let d; try{d=JSON.parse(raw);}catch{d=null;}
     return {r,d};
@@ -2592,7 +2625,7 @@ function applyExtrato(movs,suggested){
     }
     const extId=`ext:${accId}:${date}:${Math.round(m.valor*100)}:${isIn?'i':'o'}:${slug(m.descricao)}`;
     if(have.has(extId))return;
-    const cat=isIn?inOther:(m.assinatura?(assinCat||outOther):(guessCat(m.descricao)||outOther));
+    const cat=isIn?inOther:resolveCat(m.descricao,m.categoria,m.assinatura,assinCat,outOther);
     S.transactions.push({id:uid(),extId,type,amount:m.valor,desc:m.descricao,categoryId:cat,date,account:accId,card:null,subId});
     have.add(extId);n++;
   });
@@ -2700,7 +2733,7 @@ function applyFatura(compras,suggested,vencimento){
     const isSub = !!c.assinatura;
     let subId=null;
     if(isSub){ const r=ensureSubscription((c.servico||c.descricao||'Assinatura').trim(),c.valor_parcela,ry,rm); subId=r.id; if(r.created)subN++; }
-    const cat = isSub ? (assinCat||outOther) : (guessCat(c.descricao)||outOther);
+    const cat = resolveCat(c.descricao, c.categoria, isSub, assinCat, outOther);
     const total=c.parcelas_total||1, atual=c.parcela_atual||1;
     for(let k=atual;k<=total;k++){
       const off=k-atual;
