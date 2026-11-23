@@ -829,7 +829,8 @@ function drawOverviewCharts(){
   const dc=$('#donut');
   if(dc&&cats.length){
     charts.donut=new Chart(dc,{type:'doughnut',data:{labels:cats.map(c=>c.name),datasets:[{data:cats.map(c=>c.total),backgroundColor:cats.map(c=>c.color),borderWidth:0,hoverOffset:6}]},
-      options:{cutout:'70%',plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>' '+brl(c.raw)}}},responsive:true,maintainAspectRatio:false}});
+      options:{cutout:'70%',onClick:(evt,els)=>{if(els&&els.length){const c=cats[els[0].index];if(c)openCategorySummary(c.id);}},plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>' '+brl(c.raw)}}},responsive:true,maintainAspectRatio:false}});
+    dc.style.cursor='pointer';
     const tot=cats.reduce((s,c)=>s+c.total,0);
     $('#legend').innerHTML=cats.map(c=>`<div class="legrow" data-catsum="${c.id}" style="cursor:pointer"><span class="dot" style="background:${c.color}"></span><span class="nm">${esc(c.name)}</span><span class="pc num">${tot?Math.round(c.total/tot*100):0}%</span><span class="amt num">${brl(c.total)}</span><span style="color:var(--muted);font-size:13px;margin-left:4px">›</span></div>`).join('');
     $$('#legend [data-catsum]').forEach(el=>el.onclick=()=>openCategorySummary(el.dataset.catsum));
