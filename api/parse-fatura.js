@@ -63,6 +63,7 @@ const SCHEMA = {
           valor_parcela: { type: "number" },
           assinatura: { type: "boolean" },
           servico: { type: "string" },
+          categoria: { type: "string" },
         },
         required: ["descricao", "valor_parcela"],
       },
@@ -101,6 +102,7 @@ const SCHEMA_EXTRATO = {
           tipo: { type: "string" },
           assinatura: { type: "boolean" },
           servico: { type: "string" },
+          categoria: { type: "string" },
         },
         required: ["descricao", "valor", "tipo"],
       },
@@ -112,9 +114,15 @@ const SCHEMA_EXTRATO = {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const supportsThinking = (model) => !/2\.0/.test(model);
 
-function buildBody(payload, tipo) {
+function buildBody(payload, tipo, cats) {
   const isExtrato = tipo === "extrato";
-  const prompt = isExtrato ? PROMPT_EXTRATO : PROMPT;
+  let prompt = isExtrato ? PROMPT_EXTRATO : PROMPT;
+  if (cats && cats.length) {
+    prompt += "\n\nCATEGORIAS DISPONÍVEIS: " + cats.join(", ") +
+      ". Para CADA item, defina o campo 'categoria' com o NOME EXATO de uma dessas categorias (copie exatamente como está na lista). " +
+      "Use seu conhecimento sobre as marcas e lojas brasileiras para acertar (ex.: 'Farm', 'Renner', 'Zara', 'Riachuelo' são roupas/compras; 'Drogasil', 'Drogaria', 'Raia' são saúde; 'iFood', 'Rappi', restaurantes são alimentação; 'Uber', '99', posto são transporte; 'Netflix', 'Spotify' são assinaturas). " +
+      "NÃO decida a categoria só por pedaços da palavra (ex.: 'FARM' de 'Farm' NÃO é farmácia). Se nenhuma categoria servir, use 'Outros'.";
+  }
   let parts;
   if (payload.images && payload.images.length) {
     // páginas enviadas como imagens (uma por página), na ordem
@@ -141,12 +149,12 @@ function isTransient(status, msg) {
   );
 }
 
-async function callGemini(model, payload, key, tipo) {
+async function callGemini(model, payload, key, tipo, cats) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
   const r = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(buildBody(payload, tipo)),
+    body: JSON.stringify(buildBody(payload, tipo, cats)),
   });
   const data = await r.json().catch(() => ({}));
   return { ok: r.ok, status: r.status, data };
@@ -167,6 +175,7 @@ export default async function handler(req, res) {
   if ((!images || !images.length) && !pdf) return res.status(400).json({ error: "envie as páginas em 'images' (base64) ou o PDF em 'pdf'" });
   const payload = images && images.length ? { images } : { pdf };
   const tipo = req.body?.tipo === "extrato" ? "extrato" : "fatura";
+  const cats = Array.isArray(req.body?.categorias) ? req.body.categorias.map((x) => String(x || "").slice(0, 40)).filter(Boolean).slice(0, 40) : [];
 
   const start = Date.now();
   const DEADLINE = 55000; // para antes do limite de 60s da Vercel
@@ -182,7 +191,7 @@ export default async function handler(req, res) {
       if (Date.now() - start > DEADLINE) break;
       let g;
       try {
-        g = await callGemini(model, payload, key, tipo);
+        g = await callGemini(model, payload, key, tipo, cats);
       } catch (e) {
         lastErr = String(e.message || e);
         tried.push(model.replace("gemini-", "") + ":rede");
@@ -259,6 +268,7 @@ function normalize(list) {
         parcelas_total: total,
         assinatura: !!c.assinatura,
         servico: String(c.servico || "").trim(),
+        categoria: String(c.categoria || "").trim(),
       };
     })
     .filter((c) => c.valor_parcela > 0);
@@ -272,6 +282,7 @@ function normalizeExtrato(list) {
       tipo: String(m.tipo || "").toLowerCase().startsWith("entr") ? "entrada" : "saida",
       assinatura: !!m.assinatura,
       servico: String(m.servico || "").trim(),
+      categoria: String(m.categoria || "").trim(),
     }))
     .filter((m) => m.valor > 0);
 }
