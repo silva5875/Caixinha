@@ -189,6 +189,17 @@ input,select{font-family:inherit;font-size:16px}
 .sheet-actions .btn{flex:1}
 .del{color:var(--neg);background:0;border:0;font-weight:600;font-size:13px;margin-top:14px;width:100%;padding:10px}
 .hint{font-size:12px;color:var(--muted);line-height:1.5;margin:10px 0 0}
+.mgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:6px 0 10px}
+.mtile{display:flex;flex-direction:column;align-items:flex-start;gap:8px;padding:14px;border:1px solid var(--line);border-radius:14px;background:var(--surface-2);text-align:left;min-height:84px}
+.mtile:active{transform:scale(.98)}
+.mtile .ic{color:var(--accent);line-height:0;display:grid;place-items:center;width:30px;height:30px;border-radius:9px;background:var(--surface)}
+.mtile .t{font-weight:600;font-size:13px;line-height:1.2}
+details.mgroup{border:1px solid var(--line);border-radius:12px;margin:8px 0;overflow:hidden;background:var(--surface)}
+details.mgroup>summary{list-style:none;cursor:pointer;padding:14px;font-weight:600;font-size:14px;display:flex;align-items:center;justify-content:space-between}
+details.mgroup>summary::-webkit-details-marker{display:none}
+details.mgroup>summary::after{content:'▾';color:var(--muted);font-size:11px}
+details.mgroup[open]>summary::after{content:'▴'}
+details.mgroup .menu-item{padding-left:14px;padding-right:14px;border-top:1px solid var(--line);border-bottom:0}
 .menu-item{display:flex;align-items:center;gap:12px;padding:15px 4px;border-bottom:1px solid var(--line);font-weight:500;font-size:14px;width:100%;background:0;border-left:0;border-right:0;border-top:0;text-align:left}
 .menu-item:last-child{border-bottom:0}
 .menu-item .mi{font-size:19px;width:24px;text-align:center}
@@ -1605,28 +1616,40 @@ function openMenu(){
   openSheet(`
     <h2>Menu</h2>
     ${authUser
-      ? `<button class="menu-item" id="mLogout"><span class="mi">${svgIcon('cloud',18)}</span><div>Conectado${authUser.email?': '+esc(authUser.email):''}<small>dados sincronizados · toque para sair</small></div></button>`
-      : `<button class="menu-item" id="mLogin"><span class="mi">${svgIcon('cloud',18)}</span><div>Entrar com Google<small>sincronizar seus dados na nuvem</small></div></button>`}
-    <button class="menu-item" id="mExport"><span class="mi">↓</span><div>Fazer backup<small>baixa um arquivo .json com tudo</small></div></button>
-    <button class="menu-item" id="mExportCsvP"><span class="mi">▦</span><div>Exportar período (CSV)<small>só o que está selecionado no topo</small></div></button>
-    <button class="menu-item" id="mExportCsv"><span class="mi">▦</span><div>Exportar tudo (CSV)<small>todos os lançamentos</small></div></button>
-    <button class="menu-item" id="mImportJson"><span class="mi">↑</span><div>Restaurar backup<small>carrega um .json salvo antes</small></div></button>
-    <button class="menu-item" id="mImportCsv"><span class="mi">≣</span><div>Importar extrato<small>PDF (a IA lê) · ou CSV/OFX</small></div></button>
-    <button class="menu-item" id="mReminders"><span class="mi">◔</span><div>Lembretes de vencimento<small>${S.notifOff?'desligados — tocar para ligar':'ligados — tocar para desligar'}</small></div></button>
-    <button class="menu-item" id="mTheme"><span class="mi">◐</span><div>Tema claro / escuro<small>alternar aparência</small></div></button>
-    <button class="menu-item" id="mInstall"><span class="mi">⇩</span><div>Instalar app<small>ícone na tela inicial, tela cheia</small></div></button>
-    <button class="menu-item" id="mNotif"><span class="mi">◔</span><div>Ativar notificações<small>avisos de fatura e assinatura</small></div></button>
-    <button class="menu-item" id="mTransfer"><span class="mi">⇄</span><div>Transferência<small>entre contas ou para o cofrinho</small></div></button>
-    <button class="menu-item" id="mImportPdf"><span class="mi">✦</span><div>Importar fatura (PDF)<small>a IA lê as compras e parcelas</small></div></button>
-    <button class="menu-item" id="mCats"><span class="mi">◍</span><div>Categorias<small>${S.categories.length} cadastradas</small></div></button>
-    <button class="menu-item" id="mBudgets"><span class="mi">◑</span><div>Orçamentos<small>metas de gasto por categoria</small></div></button>
-    <button class="menu-item" id="mGoals"><span class="mi">◎</span><div>Metas de economia<small>reserva, viagem, objetivos</small></div></button>
-    <button class="menu-item" id="mCofrinho"><span class="mi">▣</span><div>Cofrinho<small>guardar por mês, semestre e ano</small></div></button>
-    <button class="menu-item" id="mSplit"><span class="mi">÷</span><div>Divisão de despesas<small>racha de contas: quem deve a quem</small></div></button>
-    <button class="menu-item" id="mReport"><span class="mi">▤</span><div>Relatório<small>do mês ou do ano, conforme o período</small></div></button>
-    <button class="menu-item" id="mAsk"><span class="mi">✦</span><div>Pergunte à IA<small>pergunte sobre seus gastos</small></div></button>
-    <button class="menu-item" id="mCatAI"><span class="mi">✦</span><div>Categorizar com IA<small>classifica lançamentos sem categoria</small></div></button>
-    <button class="menu-item" id="mWipe" style="color:var(--neg)"><span class="mi">⌫</span><div>Apagar todos os dados<small>recomeçar do zero</small></div></button>
+      ? `<button class="menu-item" id="mLogout" style="border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:10px"><span class="mi">${svgIcon('cloud',18)}</span><div>Conectado${authUser.email?': '+esc(authUser.email):''}<small>dados sincronizados · toque para sair</small></div></button>`
+      : `<button class="menu-item" id="mLogin" style="border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:10px"><span class="mi">${svgIcon('cloud',18)}</span><div>Entrar com Google<small>sincronizar seus dados na nuvem</small></div></button>`}
+
+    <div class="mgrid">
+      <button class="mtile" id="mImportCsv"><span class="ic">${svgIcon('list',20)}</span><span class="t">Importar extrato</span></button>
+      <button class="mtile" id="mImportPdf"><span class="ic">${svgIcon('card',20)}</span><span class="t">Importar fatura</span></button>
+      <button class="mtile" id="mAsk"><span class="ic" style="font-size:19px;color:var(--accent)">✦</span><span class="t">Pergunte à IA</span></button>
+      <button class="mtile" id="mCofrinho"><span class="ic">${svgIcon('safe',20)}</span><span class="t">Cofrinho</span></button>
+      <button class="mtile" id="mGoals"><span class="ic" style="font-size:18px;color:var(--accent)">◎</span><span class="t">Metas de economia</span></button>
+      <button class="mtile" id="mReport"><span class="ic">${svgIcon('chart',20)}</span><span class="t">Relatório</span></button>
+    </div>
+
+    <details class="mgroup"><summary>Planejamento e organização</summary>
+      <button class="menu-item" id="mBudgets"><span class="mi">◑</span><div>Orçamentos<small>metas de gasto por categoria</small></div></button>
+      <button class="menu-item" id="mCats"><span class="mi">◍</span><div>Categorias<small>${S.categories.length} cadastradas</small></div></button>
+      <button class="menu-item" id="mTransfer"><span class="mi">⇄</span><div>Transferência<small>entre contas ou para o cofrinho</small></div></button>
+      <button class="menu-item" id="mSplit"><span class="mi">÷</span><div>Divisão de despesas<small>racha de contas: quem deve a quem</small></div></button>
+      <button class="menu-item" id="mCatAI"><span class="mi">✦</span><div>Categorizar com IA<small>classifica lançamentos sem categoria</small></div></button>
+    </details>
+
+    <details class="mgroup"><summary>Dados e backup</summary>
+      <button class="menu-item" id="mExport"><span class="mi">↓</span><div>Fazer backup<small>baixa um arquivo .json com tudo</small></div></button>
+      <button class="menu-item" id="mImportJson"><span class="mi">↑</span><div>Restaurar backup<small>carrega um .json salvo antes</small></div></button>
+      <button class="menu-item" id="mExportCsvP"><span class="mi">▦</span><div>Exportar período (CSV)<small>só o que está selecionado no topo</small></div></button>
+      <button class="menu-item" id="mExportCsv"><span class="mi">▦</span><div>Exportar tudo (CSV)<small>todos os lançamentos</small></div></button>
+    </details>
+
+    <details class="mgroup"><summary>Ajustes do app</summary>
+      <button class="menu-item" id="mReminders"><span class="mi">◔</span><div>Lembretes de vencimento<small>${S.notifOff?'desligados — tocar para ligar':'ligados — tocar para desligar'}</small></div></button>
+      <button class="menu-item" id="mNotif"><span class="mi">◔</span><div>Ativar notificações<small>permitir avisos no aparelho</small></div></button>
+      <button class="menu-item" id="mTheme"><span class="mi">◐</span><div>Tema claro / escuro<small>alternar aparência</small></div></button>
+      <button class="menu-item" id="mInstall"><span class="mi">⇩</span><div>Instalar app<small>ícone na tela inicial, tela cheia</small></div></button>
+      <button class="menu-item" id="mWipe" style="color:var(--neg)"><span class="mi">⌫</span><div>Apagar todos os dados<small>recomeçar do zero</small></div></button>
+    </details>
   `);
   const mL=$('#mLogin');if(mL)mL.onclick=loginGoogle;
   const mLo=$('#mLogout');if(mLo)mLo.onclick=()=>{ if(confirm('Sair da conta? Seus dados continuam salvos na nuvem e neste aparelho.'))logout(); };
