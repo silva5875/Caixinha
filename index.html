@@ -845,17 +845,22 @@ function drawOverviewCharts(){
       {label:'Entrou',data:inD,backgroundColor:cssv('--pos'),borderRadius:5,maxBarThickness:26},
       {label:'Saiu',data:outD,backgroundColor:cssv('--neg'),borderRadius:5,maxBarThickness:26}]},
       options:{responsive:true,maintainAspectRatio:false,
+        onClick:(e,els)=>{if(els&&els.length){const b=bk[els[0].index];if(b)openBucketSummary(b.label,b.start,b.end);}},
         plugins:{legend:{labels:{color:ink,boxWidth:10,boxHeight:10,usePointStyle:true,font:{family:'Inter',size:12}}},tooltip:{callbacks:{label:c=>c.dataset.label+': '+brl(c.raw)}}},
         scales:{x:{grid:{display:false},ticks:{color:muted,font:{size:11}}},y:{grid:{color:line},ticks:{color:muted,font:{size:11},callback:v=>hideVals?'':(v>=1000?(v/1000)+'k':v)}}}}});
+    bc.style.cursor='pointer';
   }
   const pt=$('#patrim');
   if(pt){
     const nm=['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
-    const labels=[],vals=[]; const now=new Date();
-    for(let i=5;i>=0;i--){ const mref=new Date(now.getFullYear(),now.getMonth()-i,1); const asOf=i===0?now:new Date(mref.getFullYear(),mref.getMonth()+1,0); labels.push(nm[mref.getMonth()]); vals.push(networthAt(eod(asOf))); }
-    charts.patrim=new Chart(pt,{type:'line',data:{labels,datasets:[{label:'Patrimônio',data:vals,borderColor:cssv('--pos'),backgroundColor:'transparent',borderWidth:2,tension:.3,pointRadius:3,pointBackgroundColor:cssv('--pos')}]},
-      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>'Patrimônio: '+brl(c.raw)}}},
+    const labels=[],vals=[],asOfs=[]; const now=new Date();
+    for(let i=5;i>=0;i--){ const mref=new Date(now.getFullYear(),now.getMonth()-i,1); const asOf=i===0?now:new Date(mref.getFullYear(),mref.getMonth()+1,0); labels.push(nm[mref.getMonth()]); asOfs.push(eod(asOf)); vals.push(networthAt(eod(asOf))); }
+    charts.patrim=new Chart(pt,{type:'line',data:{labels,datasets:[{label:'Patrimônio',data:vals,borderColor:cssv('--pos'),backgroundColor:'transparent',borderWidth:2,tension:.3,pointRadius:4,pointBackgroundColor:cssv('--pos')}]},
+      options:{responsive:true,maintainAspectRatio:false,
+        onClick:(e,els)=>{if(els&&els.length){const i=els[0].index;openNetworthAt(labels[i],asOfs[i]);}},
+        plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>'Patrimônio: '+brl(c.raw)}}},
         scales:{x:{grid:{display:false},ticks:{color:muted,font:{size:11}}},y:{grid:{color:line},ticks:{color:muted,font:{size:11},callback:v=>hideVals?'':(v>=1000?(v/1000)+'k':v)}}}}});
+    pt.style.cursor='pointer';
   }
 }
 
@@ -1228,16 +1233,20 @@ function drawForecastChart(){
     {label:'Fixos',data:data.map(m=>m.fixos),backgroundColor:'#D99A2B',borderRadius:5,maxBarThickness:30,stack:'s'},
     {label:'Assinaturas',data:data.map(m=>m.assin),backgroundColor:cssv('--accent'),borderRadius:5,maxBarThickness:30,stack:'s'}]},
     options:{responsive:true,maintainAspectRatio:false,
+      onClick:(e,els)=>{if(els&&els.length){const m=data[els[0].index];if(m)openForecastMonth(m);}},
       plugins:{legend:{labels:{color:ink,boxWidth:10,boxHeight:10,usePointStyle:true,font:{family:'Inter',size:12}}},tooltip:{callbacks:{label:c=>c.dataset.label+': '+brl(c.raw)}}},
       scales:{x:{stacked:true,grid:{display:false},ticks:{color:muted,font:{size:11}}},
         y:{stacked:true,grid:{color:line},ticks:{color:muted,font:{size:11},callback:v=>hideVals?'':(v>=1000?(v/1000)+'k':v)}}}}});
+  bc.style.cursor='pointer';
   const pc=$('#projchart');
   if(pc){
     charts.proj=new Chart(pc,{type:'line',data:{labels:data.map(m=>mShort(m.d)),datasets:[
-      {label:'Saldo projetado',data:data.map(m=>m.projCash),borderColor:cssv('--accent'),backgroundColor:'transparent',borderWidth:2,tension:.3,pointRadius:3,pointBackgroundColor:cssv('--accent')}]},
+      {label:'Saldo projetado',data:data.map(m=>m.projCash),borderColor:cssv('--accent'),backgroundColor:'transparent',borderWidth:2,tension:.3,pointRadius:4,pointBackgroundColor:cssv('--accent')}]},
       options:{responsive:true,maintainAspectRatio:false,
+        onClick:(e,els)=>{if(els&&els.length){const m=data[els[0].index];if(m)openForecastMonth(m);}},
         plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>'Saldo: '+brl(c.raw)}}},
         scales:{x:{grid:{display:false},ticks:{color:muted,font:{size:11}}},y:{grid:{color:line},ticks:{color:muted,font:{size:11},callback:v=>hideVals?'':(v>=1000?(v/1000)+'k':v)}}}}});
+    pc.style.cursor='pointer';
   }
 }
 
@@ -2270,6 +2279,52 @@ function openReportYear(){
     const txt=`Relatório ${y}\nEntrou: ${brl(inc)}\nSaiu: ${brl(exp)}\nSaldo: ${brl(inc-exp)}\n\nGasto por mês:\n`+byMonth.map((v,i)=>`- ${nm[i]}: ${brl(v)}`).join('\n')+`\n\nTop categorias:\n`+cats.map(c=>`- ${c.name}: ${brl(c.total)} (${Math.round(c.total/totExp*100)}%)`).join('\n');
     (navigator.clipboard&&navigator.clipboard.writeText?navigator.clipboard.writeText(txt).then(()=>alert('Resumo copiado.')).catch(()=>alert('Não consegui copiar.')):alert('Cópia não suportada.'));
   };
+}
+function openBucketSummary(label,start,end){
+  const list=S.transactions.filter(t=>{if(t.transfer||(t.type==='expense'&&t.faturaOf))return false;const d=parseD(t.date);return d>=start&&d<=end;}).sort((a,b)=>b.date.localeCompare(a.date));
+  const inc=list.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0);
+  const exp=list.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0);
+  openSheet(`<h2>${esc(label)}</h2>
+    <div class="flows" style="margin-bottom:12px">
+      <div class="flow in"><div class="t"><span class="dot"></span>Entrou</div><div class="v num">${brl(inc)}</div></div>
+      <div class="flow out"><div class="t"><span class="dot"></span>Saiu</div><div class="v num">${brl(exp)}</div></div></div>
+    <div class="subtotal"><div><div style="font-size:12px;color:var(--muted);font-weight:600">saldo do período</div></div><div class="v num" style="color:${inc-exp>=0?'var(--pos)':'var(--neg)'}">${brl(inc-exp)}</div></div>
+    <div class="sec-h" style="margin:12px 2px 6px"><h2 style="font-size:13px">Lançamentos</h2></div>
+    <section class="card" style="padding:4px 16px"><div class="list">${list.map(txRow).join('')||emptyInline('Nada neste período')}</div></section>
+    <button class="btn ghost block" id="bsBack" style="margin-top:12px">Fechar</button>`);
+  $('#bsBack').onclick=closeSheet;
+  $$('[data-edit]',sheet).forEach(el=>el.onclick=()=>openTx(el.dataset.edit));
+}
+function networthBreakdown(D){
+  const t0=D.getTime(); let cash=S.accounts.reduce((a,ac)=>a+(ac.opening||0),0),cardDebt=0,cof=0;
+  S.transactions.forEach(t=>{const d=parseD(t.date).getTime();if(d>t0)return; if(t.card){if(t.type==='expense')cardDebt+=t.amount;} else if(t.account){cash+=t.type==='income'?t.amount:-t.amount; if(t.faturaOf)cardDebt-=t.amount;}});
+  (S.cofrinho&&S.cofrinho.deposits||[]).forEach(dp=>{if(parseD(dp.date).getTime()<=t0)cof+=dp.amount;});
+  cardDebt=Math.max(cardDebt,0);
+  return {cash,cof,cardDebt,net:cash+cof-cardDebt};
+}
+function openNetworthAt(label,D){
+  const b=networthBreakdown(D);
+  openSheet(`<h2>Patrimônio · ${esc(label)}</h2>
+    <section class="card hero" style="padding:18px;margin-bottom:12px"><div class="cap">Patrimônio no fim de ${esc(label)}</div><div class="bal num ${b.net>=0?'pos':'neg'}">${brl(b.net)}</div></section>
+    <section class="card" style="padding:4px 16px"><div class="list">
+      <div class="tx"><div class="mid"><div class="d">Em caixa (contas)</div></div><div class="amt num">${brl(b.cash)}</div></div>
+      <div class="tx"><div class="mid"><div class="d">Cofrinho</div></div><div class="amt num">${brl(b.cof)}</div></div>
+      <div class="tx"><div class="mid"><div class="d">A pagar (cartões)</div></div><div class="amt num out">− ${brl(b.cardDebt)}</div></div>
+    </div></section>
+    <button class="btn ghost block" id="nwBack" style="margin-top:12px">Fechar</button>`);
+  $('#nwBack').onclick=closeSheet;
+}
+function openForecastMonth(m){
+  openSheet(`<h2>${esc(mFull(m.d))}</h2>
+    <div class="subtotal"><div><div style="font-size:12px;color:var(--muted);font-weight:600">comprometido no mês</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:4px">parcelas ${brl(m.parcelas)} · assin. ${brl(m.assin)}${m.fixos?' · fixos '+brl(m.fixos):''}</div></div>
+      <div class="v num" style="color:var(--neg)">${brl(m.total)}</div></div>
+    ${m.projCash!=null?`<p class="hint" style="margin:0 0 10px">Saldo projetado ao fim do mês: <b class="num" style="color:${m.projCash>=0?'var(--pos)':'var(--neg)'}">${brl(m.projCash)}</b></p>`:''}
+    <div class="sec-h" style="margin:8px 2px 6px"><h2 style="font-size:13px">Parcelas previstas</h2></div>
+    <section class="card" style="padding:4px 16px"><div class="list">${m.items.length?m.items.map(txRow).join(''):('<div class="hint" style="padding:10px 2px">Sem parcelas — só assinaturas ('+brl(m.assin)+')'+(m.fixos?' e fixos ('+brl(m.fixos)+')':'')+'.</div>')}</div></section>
+    <button class="btn ghost block" id="fmBack" style="margin-top:12px">Fechar</button>`);
+  $('#fmBack').onclick=closeSheet;
+  $$('[data-edit]',sheet).forEach(el=>el.onclick=()=>openTx(el.dataset.edit));
 }
 function openCategorySummary(catId){
   const c = catId==='none'?null:catById(catId);
