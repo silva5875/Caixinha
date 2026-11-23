@@ -375,6 +375,7 @@ function seedEmpty(){
     deletedExt:[],
     partnerName:'',
     notifOff:false,
+    menuUse:{},
     splits:[],
     budgets:{},
     goals:[],
@@ -468,6 +469,8 @@ function sanitizeState(raw){
   out.deletedExt=(Array.isArray(raw.deletedExt)?raw.deletedExt:[]).slice(0,5000).map(x=>_str(x,200)).filter(Boolean);
   out.partnerName=_str(raw.partnerName,60);
   out.notifOff=!!raw.notifOff;
+  out.menuUse={};
+  if(raw.menuUse&&typeof raw.menuUse==='object'){ for(const k in raw.menuUse){ const v=parseInt(raw.menuUse[k]); if(Number.isFinite(v)&&v>0)out.menuUse[String(k).slice(0,40)]=v; } }
   out.splits=(Array.isArray(raw.splits)?raw.splits:[]).slice(0,3000).map(s=>{
     if(s.kind==='settle')return {id:_str(s.id,64)||uid(),kind:'settle',date:_date(s.date),amount:Math.abs(_num(s.amount)),dir:_enum(s.dir,['partner_to_me','me_to_partner'],'partner_to_me')};
     return {id:_str(s.id,64)||uid(),kind:'exp',date:_date(s.date),desc:_str(s.desc,120),total:Math.abs(_num(s.total)),payer:_enum(s.payer,['me','partner'],'me'),myShare:Math.max(0,_num(s.myShare)),partnerShare:Math.max(0,_num(s.partnerShare))};
@@ -1612,28 +1615,54 @@ function openCard(id){
 }
 
 /* menu */
+const MENU_DEFAULT=['mImportCsv','mImportPdf','mAsk','mCofrinho','mGoals','mReport'];
+const MENU_EXTRA=['mBudgets','mCats','mTransfer','mSplit','mCatAI'];
+const MENU_POOL=MENU_DEFAULT.concat(MENU_EXTRA);
+function menuFeatures(){
+  return {
+    mImportCsv:{label:'Importar extrato',ic:svgIcon('list',20),small:'PDF (a IA lê) · ou CSV/OFX'},
+    mImportPdf:{label:'Importar fatura',ic:svgIcon('card',20),small:'a IA lê as compras e parcelas'},
+    mAsk:{label:'Pergunte à IA',ic:'<span style="font-size:19px;color:var(--accent)">✦</span>',small:'pergunte sobre seus gastos'},
+    mCofrinho:{label:'Cofrinho',ic:svgIcon('safe',20),small:'guardar por mês, semestre e ano'},
+    mGoals:{label:'Metas de economia',ic:'<span style="font-size:18px;color:var(--accent)">◎</span>',small:'reserva, viagem, objetivos'},
+    mReport:{label:'Relatório',ic:svgIcon('chart',20),small:'do mês ou do ano'},
+    mBudgets:{label:'Orçamentos',ic:'<span style="color:var(--accent)">◑</span>',small:'metas de gasto por categoria'},
+    mCats:{label:'Categorias',ic:'<span style="color:var(--accent)">◍</span>',small:(S.categories.length)+' cadastradas'},
+    mTransfer:{label:'Transferência',ic:'<span style="color:var(--accent)">⇄</span>',small:'entre contas ou para o cofrinho'},
+    mSplit:{label:'Divisão de despesas',ic:'<span style="color:var(--accent)">÷</span>',small:'racha: quem deve a quem'},
+    mCatAI:{label:'Categorizar com IA',ic:'<span style="font-size:17px;color:var(--accent)">✦</span>',small:'classifica lançamentos'}
+  };
+}
+function bumpUse(id){ if(!MENU_POOL.includes(id))return; S.menuUse=S.menuUse||{}; S.menuUse[id]=(S.menuUse[id]||0)+1; save(); }
+// destaques = 6 posições (padrão), onde uma função com ≥3 usos substitui a menos usada atual
+function computeHighlights(){
+  const use=id=>(S.menuUse&&S.menuUse[id])||0;
+  const hi=[...MENU_DEFAULT];
+  const cands=MENU_EXTRA.filter(id=>use(id)>=3).sort((a,b)=>use(b)-use(a));
+  cands.forEach(id=>{
+    // acha o destaque atual menos usado (desempate: posição mais à direita)
+    let idx=0, minU=use(hi[0]);
+    for(let i=1;i<hi.length;i++){ if(use(hi[i])<=minU){minU=use(hi[i]);idx=i;} }
+    if(use(id)>minU) hi[idx]=id;
+  });
+  return hi;
+}
 function openMenu(){
+  const FEAT=menuFeatures();
+  const hi=computeHighlights();
+  const planIds=MENU_POOL.filter(id=>!hi.includes(id));
+  const tile=id=>`<button class="mtile" id="${id}"><span class="ic">${FEAT[id].ic}</span><span class="t">${FEAT[id].label}</span></button>`;
+  const item=id=>`<button class="menu-item" id="${id}"><span class="mi">${FEAT[id].ic}</span><div>${FEAT[id].label}<small>${FEAT[id].small}</small></div></button>`;
   openSheet(`
     <h2>Menu</h2>
     ${authUser
       ? `<button class="menu-item" id="mLogout" style="border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:10px"><span class="mi">${svgIcon('cloud',18)}</span><div>Conectado${authUser.email?': '+esc(authUser.email):''}<small>dados sincronizados · toque para sair</small></div></button>`
       : `<button class="menu-item" id="mLogin" style="border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:10px"><span class="mi">${svgIcon('cloud',18)}</span><div>Entrar com Google<small>sincronizar seus dados na nuvem</small></div></button>`}
 
-    <div class="mgrid">
-      <button class="mtile" id="mImportCsv"><span class="ic">${svgIcon('list',20)}</span><span class="t">Importar extrato</span></button>
-      <button class="mtile" id="mImportPdf"><span class="ic">${svgIcon('card',20)}</span><span class="t">Importar fatura</span></button>
-      <button class="mtile" id="mAsk"><span class="ic" style="font-size:19px;color:var(--accent)">✦</span><span class="t">Pergunte à IA</span></button>
-      <button class="mtile" id="mCofrinho"><span class="ic">${svgIcon('safe',20)}</span><span class="t">Cofrinho</span></button>
-      <button class="mtile" id="mGoals"><span class="ic" style="font-size:18px;color:var(--accent)">◎</span><span class="t">Metas de economia</span></button>
-      <button class="mtile" id="mReport"><span class="ic">${svgIcon('chart',20)}</span><span class="t">Relatório</span></button>
-    </div>
+    <div class="mgrid">${hi.map(tile).join('')}</div>
 
     <details class="mgroup"><summary>Planejamento e organização</summary>
-      <button class="menu-item" id="mBudgets"><span class="mi">◑</span><div>Orçamentos<small>metas de gasto por categoria</small></div></button>
-      <button class="menu-item" id="mCats"><span class="mi">◍</span><div>Categorias<small>${S.categories.length} cadastradas</small></div></button>
-      <button class="menu-item" id="mTransfer"><span class="mi">⇄</span><div>Transferência<small>entre contas ou para o cofrinho</small></div></button>
-      <button class="menu-item" id="mSplit"><span class="mi">÷</span><div>Divisão de despesas<small>racha de contas: quem deve a quem</small></div></button>
-      <button class="menu-item" id="mCatAI"><span class="mi">✦</span><div>Categorizar com IA<small>classifica lançamentos sem categoria</small></div></button>
+      ${planIds.map(item).join('')}
     </details>
 
     <details class="mgroup"><summary>Dados e backup</summary>
@@ -1673,6 +1702,7 @@ function openMenu(){
   $('#mAsk').onclick=openAskAI;
   $('#mCatAI').onclick=categorizeAI;
   $('#mWipe').onclick=()=>{ if(confirm('Apagar tudo? Faça um backup antes se quiser guardar.')){S=seedEmpty();save();closeSheet();render();} };
+  MENU_POOL.forEach(id=>{ const b=$('#'+id); if(b)b.addEventListener('click',()=>bumpUse(id)); });
 }
 function semesterRange(ref){ const d=ref||new Date(); const y=d.getFullYear(); const h=d.getMonth()<6?0:6; return {start:sod(new Date(y,h,1)),end:eod(new Date(y,h+6,0))}; }
 function openCofrinho(){
