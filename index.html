@@ -1958,6 +1958,10 @@ async function loadItems(coupleId){
   if(error)throw new Error(error.message);
   return data||[];
 }
+async function pushNotify(toUser,title,body,url){
+  if(!sb||!authUser||!toUser)return;
+  try{ await fetch(apiBase()+'/api/push',{method:'POST',headers:await authHeaders(),body:JSON.stringify({action:'notify',toUser,title,body,url:url||'/'})}); }catch(e){}
+}
 async function approveItem(id){ const {error}=await sb.from('split_items').update({status:'approved'}).eq('id',id); if(error)throw new Error(error.message); }
 async function rejectItem(id){ const {error}=await sb.from('split_items').update({status:'rejected'}).eq('id',id); if(error)throw new Error(error.message); }
 async function deleteSharedItem(id){ const {error}=await sb.from('split_items').delete().eq('id',id); if(error)throw new Error(error.message); }
@@ -2078,13 +2082,13 @@ function openNotifications(){
   if(!body)body='<div class="empty" style="padding:30px"><p>Nada por aqui. Você está em dia!</p></div>';
   openSheet(`<h2>Notificações</h2>${body}<button class="btn ghost block" id="nClose" style="margin-top:8px">Fechar</button>`);
   $('#nClose').onclick=closeSheet;
-  const ia=$('#nInvAcc'); if(ia)ia.onclick=async()=>{ try{await acceptCouple(inv.id);}catch(e){alert('Erro ao aceitar: '+e.message);return;} await refreshNotifs(); openNotifications(); };
-  const ir=$('#nInvRej'); if(ir)ir.onclick=async()=>{ if(!confirm('Recusar o convite de divisão?'))return; try{await sb.from('couples').update({member_b:authUser.id,b_email:(authUser.email||'').toLowerCase(),status:'rejected'}).eq('id',inv.id);}catch(e){alert('Erro: '+e.message);} await refreshNotifs(); closeSheet(); };
+  const ia=$('#nInvAcc'); if(ia)ia.onclick=async()=>{ try{await acceptCouple(inv.id);}catch(e){alert('Erro ao aceitar: '+e.message);return;} pushNotify(inv.member_a,'Caixa — divisão',(authUser.email||'Seu parceiro(a)')+' aceitou seu convite'); await refreshNotifs(); openNotifications(); };
+  const ir=$('#nInvRej'); if(ir)ir.onclick=async()=>{ if(!confirm('Recusar o convite de divisão?'))return; try{await sb.from('couples').update({member_b:authUser.id,b_email:(authUser.email||'').toLowerCase(),status:'rejected'}).eq('id',inv.id);}catch(e){alert('Erro: '+e.message);} pushNotify(inv.member_a,'Caixa — divisão',(authUser.email||'O convidado')+' recusou seu convite'); await refreshNotifs(); closeSheet(); };
   $$('[data-rpay]').forEach(el=>el.onclick=()=>openPayInvoice(el.dataset.rpay));
   $$('[data-rimp]').forEach(el=>el.onclick=()=>pickFile('pdf'));
   $$('[data-ndismiss]').forEach(el=>el.onclick=async()=>{ try{await sb.from('couples').update({status:'dismissed'}).eq('id',el.dataset.ndismiss);}catch(e){alert('Erro: '+e.message);} await refreshNotifs(); openNotifications(); });
-  $$('[data-napp]').forEach(el=>el.onclick=async()=>{ try{await approveItem(el.dataset.napp);}catch(e){alert('Erro: '+e.message);} await refreshNotifs(); openNotifications(); });
-  $$('[data-nrej]').forEach(el=>el.onclick=async()=>{ if(!confirm('Recusar este item?'))return; try{await rejectItem(el.dataset.nrej);}catch(e){alert('Erro: '+e.message);} await refreshNotifs(); openNotifications(); });
+  $$('[data-napp]').forEach(el=>el.onclick=async()=>{ const it=(notif.pending||[]).find(x=>x.id===el.dataset.napp); try{await approveItem(el.dataset.napp);}catch(e){alert('Erro: '+e.message);} if(it)pushNotify(it.created_by,'Caixa — divisão','Sua despesa/acerto foi aprovado'); await refreshNotifs(); openNotifications(); });
+  $$('[data-nrej]').forEach(el=>el.onclick=async()=>{ if(!confirm('Recusar este item?'))return; const it=(notif.pending||[]).find(x=>x.id===el.dataset.nrej); try{await rejectItem(el.dataset.nrej);}catch(e){alert('Erro: '+e.message);} if(it)pushNotify(it.created_by,'Caixa — divisão','Sua despesa/acerto foi recusado'); await refreshNotifs(); openNotifications(); });
 }
 async function openSplit(){
   if(!sb||!authUser){ renderSplitLocal(); return; }
@@ -2131,8 +2135,8 @@ async function renderSplitShared(couple){
   $('#shBack').onclick=openMenu;
   $('#shAdd').onclick=()=>openSharedExp(couple);
   $('#shSettle').onclick=()=>openSharedSettle(couple);
-  $$('[data-shapp]').forEach(el=>el.onclick=async()=>{ try{await approveItem(el.dataset.shapp);}catch(e){alert('Erro: '+e.message);} renderSplitShared(couple); });
-  $$('[data-shrej]').forEach(el=>el.onclick=async()=>{ if(!confirm('Recusar este item?'))return; try{await rejectItem(el.dataset.shrej);}catch(e){alert('Erro: '+e.message);} renderSplitShared(couple); });
+  $$('[data-shapp]').forEach(el=>el.onclick=async()=>{ const it=items.find(x=>x.id===el.dataset.shapp); try{await approveItem(el.dataset.shapp);}catch(e){alert('Erro: '+e.message);} if(it)pushNotify(it.created_by,'Caixa — divisão','Sua despesa/acerto foi aprovado'); renderSplitShared(couple); });
+  $$('[data-shrej]').forEach(el=>el.onclick=async()=>{ if(!confirm('Recusar este item?'))return; const it=items.find(x=>x.id===el.dataset.shrej); try{await rejectItem(el.dataset.shrej);}catch(e){alert('Erro: '+e.message);} if(it)pushNotify(it.created_by,'Caixa — divisão','Sua despesa/acerto foi recusado'); renderSplitShared(couple); });
   $$('[data-shdel]').forEach(el=>el.onclick=async()=>{ if(!confirm('Remover este item?'))return; try{await deleteSharedItem(el.dataset.shdel);}catch(e){alert('Erro: '+e.message);} renderSplitShared(couple); });
 }
 function openSharedExp(couple){
@@ -2154,8 +2158,10 @@ function openSharedExp(couple){
     const partnerShare=Math.round((total-myShare)*100)/100; myShare=Math.round(myShare*100)/100;
     const paid_by=$('#sePayer').value==='other'?other:me;
     const shares={}; shares[me]=myShare; shares[other]=partnerShare;
-    const {error}=await sb.from('split_items').insert({couple_id:couple.id,created_by:me,kind:'exp',date:$('#seDate').value||todayStr(),descr:$('#seDesc').value.trim(),total:Math.round(total*100)/100,paid_by,shares,status:'pending'});
+    const desc=$('#seDesc').value.trim();
+    const {error}=await sb.from('split_items').insert({couple_id:couple.id,created_by:me,kind:'exp',date:$('#seDate').value||todayStr(),descr:desc,total:Math.round(total*100)/100,paid_by,shares,status:'pending'});
     if(error){alert('Erro ao salvar: '+error.message);return;}
+    pushNotify(other,'Caixa — divisão','Nova despesa para aprovar: '+(desc||'despesa')+' · '+brl(Math.round(total*100)/100));
     renderSplitShared(couple);
   };
 }
@@ -2174,6 +2180,7 @@ function openSharedSettle(couple){
     const from_user=dir==='me_to_other'?me:other, to_user=dir==='me_to_other'?other:me;
     const {error}=await sb.from('split_items').insert({couple_id:couple.id,created_by:me,kind:'settle',date:$('#ssDate').value||todayStr(),amount:Math.round(amt*100)/100,from_user,to_user,status:'pending'});
     if(error){alert('Erro ao salvar: '+error.message);return;}
+    pushNotify(other,'Caixa — divisão','Novo acerto para confirmar · '+brl(Math.round(amt*100)/100));
     renderSplitShared(couple);
   };
 }
