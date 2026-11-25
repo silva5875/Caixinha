@@ -1721,7 +1721,7 @@ function openMenu(){
 
     <details class="mgroup"><summary>Ajustes do app</summary>
       <button class="menu-item" id="mReminders"><span class="mi">◔</span><div>Lembretes de vencimento<small>${S.notifOff?'desligados — tocar para ligar':'ligados — tocar para desligar'}</small></div></button>
-      <button class="menu-item" id="mNotif"><span class="mi">◔</span><div>Ativar notificações<small>permitir avisos no aparelho</small></div></button>
+      <button class="menu-item" id="mNotif"><span class="mi">◔</span><div>Notificações no celular<small>receber avisos mesmo com o app fechado</small></div></button>
       <button class="menu-item" id="mTheme"><span class="mi">◐</span><div>Tema claro / escuro<small>alternar aparência</small></div></button>
       <button class="menu-item" id="mInstall"><span class="mi">⇩</span><div>Instalar app<small>ícone na tela inicial, tela cheia</small></div></button>
       <button class="menu-item" id="mWipe" style="color:var(--neg)"><span class="mi">⌫</span><div>Apagar todos os dados<small>recomeçar do zero</small></div></button>
@@ -2999,13 +2999,32 @@ async function installApp(){
   if(deferredPrompt){ deferredPrompt.prompt(); try{await deferredPrompt.userChoice;}catch(e){} deferredPrompt=null; return; }
   alert('Para instalar:\n\n• Android/Chrome: menu do navegador (⋮) → "Instalar app" ou "Adicionar à tela inicial".\n• iPhone/Safari: botão Compartilhar → "Adicionar à Tela de Início".');
 }
+const VAPID_PUBLIC='BLGt3ygONScU7g5bslwmM8crduxB6ZLkPGBWR9uHHL_2yGrh68TUvoq5s3H-H0dX5rnxRJJQfgGzXLZmfGLcYRg';
+function urlB64ToU8(b64){ const pad='='.repeat((4-b64.length%4)%4); const s=(b64+pad).replace(/-/g,'+').replace(/_/g,'/'); const raw=atob(s); const a=new Uint8Array(raw.length); for(let i=0;i<raw.length;i++)a[i]=raw.charCodeAt(i); return a; }
 async function enableNotifications(){
   closeSheet();
   if(!('Notification' in window)){ alert('Seu navegador não suporta notificações.'); return; }
   let p=Notification.permission;
   if(p!=='granted') p=await Notification.requestPermission();
-  if(p==='granted'){ alert('Notificações ativadas. Ao abrir o app, você será avisado sobre faturas vencendo, assinaturas renovando e orçamento estourado.'); maybeNotify(true); }
-  else alert('Permissão de notificação não concedida.');
+  if(p!=='granted'){ alert('Permissão de notificação não concedida.'); return; }
+  // notificações locais (app aberto) já funcionam
+  maybeNotify(true);
+  // push real (app fechado): precisa de login + service worker + assinatura
+  if(!('serviceWorker' in navigator)||!('PushManager' in window)){ alert('Notificações locais ativadas. (Este navegador não suporta push com o app fechado.)'); return; }
+  if(!sb||!authUser){ alert('Notificações locais ativadas. Para receber avisos com o app FECHADO, entre com o Google e ative de novo.'); return; }
+  try{
+    const reg=await navigator.serviceWorker.ready;
+    let sub=await reg.pushManager.getSubscription();
+    if(!sub) sub=await reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:urlB64ToU8(VAPID_PUBLIC)});
+    const j=sub.toJSON();
+    const {error}=await sb.from('push_subscriptions').upsert({user_id:authUser.id,endpoint:sub.endpoint,p256dh:j.keys.p256dh,auth:j.keys.auth},{onConflict:'endpoint'});
+    if(error){ alert('Ativado localmente, mas não consegui salvar a assinatura de push: '+error.message); return; }
+    try{
+      const r=await fetch(apiBase()+'/api/push',{method:'POST',headers:await authHeaders(),body:JSON.stringify({action:'test',subscription:j})});
+      const d=await r.json().catch(()=>null);
+      alert(r.ok?'Notificações no celular ativadas! Você deve receber um teste agora.':'Ativado, mas o teste falhou: '+((d&&d.error)||('erro '+r.status)));
+    }catch(e){ alert('Ativado. (teste não enviado agora: '+e.message+')'); }
+  }catch(e){ alert('Notificações locais ativadas. Push com app fechado falhou: '+e.message); }
 }
 function maybeNotify(force){
   try{
