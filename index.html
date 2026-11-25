@@ -3014,8 +3014,10 @@ async function enableNotifications(){
   if(!sb||!authUser){ alert('Notificações locais ativadas. Para receber avisos com o app FECHADO, entre com o Google e ative de novo.'); return; }
   try{
     const reg=await navigator.serviceWorker.ready;
+    // descarta qualquer assinatura antiga (pode estar expirada / com chave diferente)
     let sub=await reg.pushManager.getSubscription();
-    if(!sub) sub=await reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:urlB64ToU8(VAPID_PUBLIC)});
+    if(sub){ const oldEp=sub.endpoint; try{await sub.unsubscribe();}catch(_){}; try{ if(sb&&authUser)await sb.from('push_subscriptions').delete().eq('endpoint',oldEp); }catch(_){}; sub=null; }
+    sub=await reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:urlB64ToU8(VAPID_PUBLIC)});
     const j=sub.toJSON();
     const {error}=await sb.from('push_subscriptions').upsert({user_id:authUser.id,endpoint:sub.endpoint,p256dh:j.keys.p256dh,auth:j.keys.auth},{onConflict:'endpoint'});
     if(error){ alert('Ativado localmente, mas não consegui salvar a assinatura de push: '+error.message); return; }
