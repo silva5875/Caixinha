@@ -48,21 +48,30 @@ async function sendTo(userId, payloadObj) {
 // ---- lembretes a partir do app_state (jsonb) de cada usuário ----
 function parseD(s) { const p = String(s || "").split("-").map(Number); return new Date(p[0], (p[1] || 1) - 1, p[2] || 1); }
 function quando(dd) { return dd === 0 ? "hoje" : (dd === 1 ? "amanhã" : "em " + dd + " dias"); }
-function remindersFor(data) {
+function remindersFor(data, mode) {
   if (!data || data.notifOff) return [];
+  const evening = mode === "evening";
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const dUntil = (day) => { let d = new Date(today.getFullYear(), today.getMonth(), Math.min(day, 28)); if (d < today) d = new Date(today.getFullYear(), today.getMonth() + 1, Math.min(day, 28)); return Math.round((d - today) / 86400000); };
   const cards = data.cards || [], tx = data.transactions || [], fixos = data.fixos || [];
   const cardInvoice = (cid) => tx.reduce((s, t) => (t.card === cid && t.type === "expense" && !t.paid && !t.previsto) ? s + (+t.amount || 0) : s, 0);
   const out = [];
   cards.forEach((c) => {
-    if (c.closingDay) { const dd = dUntil(c.closingDay); if (dd <= 2) out.push({ tag: "fecha-" + c.id, title: "Fatura do " + (c.name || "cartão"), body: "fecha " + quando(dd) + " — lembre de importar" }); }
+    if (!evening && c.closingDay) { const dd = dUntil(c.closingDay); if (dd <= 2) out.push({ tag: "fecha-" + c.id, title: "Fatura do " + (c.name || "cartão"), body: "fecha " + quando(dd) + " — lembre de importar" }); }
     const inv = cardInvoice(c.id);
-    if (c.dueDay && inv > 0) { const dd = dUntil(c.dueDay); if (dd <= 5) out.push({ tag: "venc-" + c.id, title: (c.name || "Cartão"), body: "Fatura vence " + quando(dd) + " · " + brl(inv) }); }
+    if (c.dueDay && inv > 0) {
+      const dd = dUntil(c.dueDay);
+      if (evening) { if (dd === 0) out.push({ tag: "venc-eve-" + c.id, title: (c.name || "Cartão"), body: "Vence HOJE · " + brl(inv) + " — não esqueça de pagar" }); }
+      else { if (dd <= 5) out.push({ tag: "venc-" + c.id, title: (c.name || "Cartão"), body: "Fatura vence " + quando(dd) + " · " + brl(inv) }); }
+    }
   });
   const fx = [];
-  (fixos || []).filter((f) => f.active !== false).forEach((f) => { const dd = dUntil(f.day || 1); if (dd <= 2) fx.push((f.name || "Fixo") + " " + quando(dd) + " (" + brl(f.amount) + ")"); });
-  if (fx.length) out.push({ tag: "fixos", title: "Gastos fixos a vencer", body: fx.slice(0, 4).join(" · ") });
+  (fixos || []).filter((f) => f.active !== false).forEach((f) => {
+    const dd = dUntil(f.day || 1);
+    if (evening) { if (dd === 0) fx.push((f.name || "Fixo") + " (" + brl(f.amount) + ")"); }
+    else { if (dd <= 2) fx.push((f.name || "Fixo") + " " + quando(dd) + " (" + brl(f.amount) + ")"); }
+  });
+  if (fx.length) out.push({ tag: evening ? "fixos-eve" : "fixos", title: evening ? "Vencem HOJE" : "Gastos fixos a vencer", body: fx.slice(0, 4).join(" · ") });
   return out;
 }
 
@@ -78,10 +87,11 @@ export default async function handler(req, res) {
     if (!cs || h !== "Bearer " + cs) return res.status(401).json({ error: "cron não autorizado" });
     if (!SB_URL || !SB_SECRET) return res.status(500).json({ error: "faltam SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY" });
     try {
+      const mode = ((req.query && req.query.when === "evening") || /[?&]when=evening/.test(req.url || "")) ? "evening" : "morning";
       const rows = await sbSelect(`app_state?select=user_id,data`);
       let users = 0, notifs = 0;
       for (const row of rows) {
-        const rem = remindersFor(row.data);
+        const rem = remindersFor(row.data, mode);
         if (!rem.length) continue;
         users++;
         for (const n of rem) notifs += await sendTo(row.user_id, { title: n.title, body: n.body, url: "/", tag: n.tag });
