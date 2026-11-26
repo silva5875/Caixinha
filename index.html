@@ -392,6 +392,7 @@ function seedEmpty(){
     deletedExt:[],
     partnerName:'',
     notifOff:false,
+    payDay:0,
     menuUse:{},
     catMemory:{},
     displayName:'',
@@ -489,6 +490,7 @@ function sanitizeState(raw){
   out.partnerName=_str(raw.partnerName,60);
   out.displayName=_str(raw.displayName,20);
   out.notifOff=!!raw.notifOff;
+  out.payDay=(()=>{const v=parseInt(raw.payDay);return Number.isFinite(v)&&v>=1&&v<=28?v:0;})();
   out.menuUse={};
   if(raw.menuUse&&typeof raw.menuUse==='object'){ for(const k in raw.menuUse){ const v=parseInt(raw.menuUse[k]); if(Number.isFinite(v)&&v>0)out.menuUse[String(k).slice(0,40)]=v; } }
   out.catMemory={};
@@ -1721,6 +1723,7 @@ function openMenu(){
 
     <details class="mgroup"><summary>Ajustes do app</summary>
       <button class="menu-item" id="mReminders"><span class="mi">◔</span><div>Lembretes de vencimento<small>${S.notifOff?'desligados — tocar para ligar':'ligados — tocar para desligar'}</small></div></button>
+      <button class="menu-item" id="mPayDay"><span class="mi">◷</span><div>Dia de pagamento<small>${S.payDay?('todo dia '+S.payDay):'no vencimento de cada conta'}</small></div></button>
       <button class="menu-item" id="mNotif"><span class="mi">◔</span><div>Notificações no celular<small>receber avisos mesmo com o app fechado</small></div></button>
       <button class="menu-item" id="mTheme"><span class="mi">◐</span><div>Tema claro / escuro<small>alternar aparência</small></div></button>
       <button class="menu-item" id="mInstall"><span class="mi">⇩</span><div>Instalar app<small>ícone na tela inicial, tela cheia</small></div></button>
@@ -1735,6 +1738,7 @@ function openMenu(){
   $('#mImportJson').onclick=()=>pickFile('json');
   $('#mImportCsv').onclick=()=>pickFile('csv');
   $('#mReminders').onclick=()=>{ S.notifOff=!S.notifOff; save(); refreshNotifs(); closeSheet(); alert(S.notifOff?'Lembretes de vencimento desligados.':'Lembretes de vencimento ligados.'); };
+  $('#mPayDay').onclick=openPayDay;
   $('#mTheme').onclick=()=>{toggleTheme();};
   $('#mInstall').onclick=installApp;
   $('#mNotif').onclick=enableNotifications;
@@ -2332,6 +2336,16 @@ function openForecastMonth(m){
     <button class="btn ghost block" id="fmBack" style="margin-top:12px">Fechar</button>`);
   $('#fmBack').onclick=closeSheet;
   $$('[data-edit]',sheet).forEach(el=>el.onclick=()=>openTx(el.dataset.edit));
+}
+function openPayDay(){
+  let opts='<option value="0"'+(!S.payDay?' selected':'')+'>No vencimento de cada conta</option>';
+  for(let d=1;d<=28;d++)opts+='<option value="'+d+'"'+(S.payDay===d?' selected':'')+'>Todo dia '+d+'</option>';
+  openSheet(`<h2>Dia de pagamento</h2>
+    <p class="hint" style="margin:0 0 10px">Se você costuma pagar tudo num dia fixo do mês, escolha aqui. Os lembretes passam a mirar esse dia (avisando mesmo que a conta ainda não tenha vencido). As faturas de cartão só entram quando já fecharam — se ainda não fecharam até o seu dia, o aviso segue pelo vencimento normal.</p>
+    <div class="field"><label>Quando você costuma pagar</label><select id="pdSel">${opts}</select></div>
+    <div class="sheet-actions"><button class="btn ghost" id="pdCancel">Cancelar</button><button class="btn" id="pdSave">Salvar</button></div>`);
+  $('#pdCancel').onclick=closeSheet;
+  $('#pdSave').onclick=()=>{ S.payDay=parseInt($('#pdSel').value)||0; save(); closeSheet(); };
 }
 function openCategorySummary(catId){
   const c = catId==='none'?null:catById(catId);
