@@ -55,9 +55,45 @@ function remindersFor(data, mode) {
   const dUntil = (day) => { let d = new Date(today.getFullYear(), today.getMonth(), Math.min(day, 28)); if (d < today) d = new Date(today.getFullYear(), today.getMonth() + 1, Math.min(day, 28)); return Math.round((d - today) / 86400000); };
   const cards = data.cards || [], tx = data.transactions || [], fixos = data.fixos || [];
   const cardInvoice = (cid) => tx.reduce((s, t) => (t.card === cid && t.type === "expense" && !t.paid && !t.previsto) ? s + (+t.amount || 0) : s, 0);
+  const payDay = (() => { const v = parseInt(data.payDay); return Number.isFinite(v) && v >= 1 && v <= 28 ? v : 0; })();
   const out = [];
+
+  // fatura fechando (útil nos dois modos; só de manhã)
+  if (!evening) cards.forEach((c) => { if (c.closingDay) { const dd = dUntil(c.closingDay); if (dd <= 2) out.push({ tag: "fecha-" + c.id, title: "Fatura do " + (c.name || "cartão"), body: "fecha " + quando(dd) + " — lembre de importar" }); } });
+
+  if (payDay) {
+    // ---- MODO "dia de pagamento" (ex.: paga tudo todo dia 5) ----
+    const dp = dUntil(payDay);
+    const within = evening ? (dp === 0) : (dp <= 3);
+    cards.forEach((c) => {
+      const inv = cardInvoice(c.id); if (!(inv > 0)) return;
+      const closedByPay = !c.closingDay || c.closingDay <= payDay; // fatura já fechou até o dia de pagar?
+      if (closedByPay) {
+        if (within) {
+          let nota = "";
+          if (c.dueDay && c.dueDay > payDay) nota = " · ainda não venceu (vence dia " + c.dueDay + ")";
+          else if (c.dueDay && c.dueDay < payDay) nota = " · venceu dia " + c.dueDay;
+          out.push({ tag: (evening ? "pay-eve-" : "pay-") + c.id, title: (c.name || "Cartão"), body: "Seu dia de pagar " + quando(dp) + " · " + brl(inv) + nota });
+        }
+      } else {
+        // ainda não fechou até o dia de pagar -> segue o vencimento normal
+        if (c.dueDay) {
+          const dd = dUntil(c.dueDay);
+          if (evening) { if (dd === 0) out.push({ tag: "venc-eve-" + c.id, title: (c.name || "Cartão"), body: "Vence HOJE · " + brl(inv) }); }
+          else { if (dd <= 5) out.push({ tag: "venc-" + c.id, title: (c.name || "Cartão"), body: "Fatura vence " + quando(dd) + " · " + brl(inv) }); }
+        }
+      }
+    });
+    if (within) {
+      const fx = [];
+      (fixos || []).filter((f) => f.active !== false).forEach((f) => { let nota = (f.day && f.day > payDay) ? " (vence dia " + f.day + ")" : ""; fx.push((f.name || "Fixo") + " " + brl(f.amount) + nota); });
+      if (fx.length) out.push({ tag: evening ? "payfix-eve" : "payfix", title: "Seu dia de pagar — fixos", body: fx.slice(0, 4).join(" · ") });
+    }
+    return out;
+  }
+
+  // ---- MODO normal (no vencimento) ----
   cards.forEach((c) => {
-    if (!evening && c.closingDay) { const dd = dUntil(c.closingDay); if (dd <= 2) out.push({ tag: "fecha-" + c.id, title: "Fatura do " + (c.name || "cartão"), body: "fecha " + quando(dd) + " — lembre de importar" }); }
     const inv = cardInvoice(c.id);
     if (c.dueDay && inv > 0) {
       const dd = dUntil(c.dueDay);
