@@ -2005,12 +2005,20 @@ function localReminders(){
   if(S.notifOff)return [];
   const out=[], today=new Date(); today.setHours(0,0,0,0);
   const dUntil=day=>{let d=new Date(today.getFullYear(),today.getMonth(),Math.min(day,28));if(d<today)d=new Date(today.getFullYear(),today.getMonth()+1,Math.min(day,28));return Math.round((d-today)/86400000);};
+  const payDay=(()=>{const v=parseInt(S.payDay);return Number.isFinite(v)&&v>=1&&v<=28?v:0;})();
   S.cards.forEach(c=>{
     if(c.closingDay){const dd=dUntil(c.closingDay); if(dd<=3)out.push({kind:'fatura_fecha',card:c,dias:dd});}
-    const inv=cardInvoice(c);
-    if(c.dueDay&&inv>0){const dd=dUntil(c.dueDay); if(dd<=5)out.push({kind:'fatura_vence',card:c,amount:inv,dias:dd});}
+    const inv=cardInvoice(c); if(!(inv>0))return;
+    if(payDay){
+      const closed=!c.closingDay||c.closingDay<=payDay;
+      if(closed){ const dp=dUntil(payDay); if(dp<=3){ let note=''; if(c.dueDay&&c.dueDay>payDay)note='ainda não venceu (vence dia '+c.dueDay+')'; else if(c.dueDay&&c.dueDay<payDay)note='venceu dia '+c.dueDay; out.push({kind:'fatura_vence',card:c,amount:inv,dias:dp,pay:true,note}); } }
+      else if(c.dueDay){ const dd=dUntil(c.dueDay); if(dd<=5)out.push({kind:'fatura_vence',card:c,amount:inv,dias:dd}); }
+    } else if(c.dueDay){ const dd=dUntil(c.dueDay); if(dd<=5)out.push({kind:'fatura_vence',card:c,amount:inv,dias:dd}); }
   });
-  (S.fixos||[]).filter(f=>f.active!==false).forEach(f=>{ const dd=dUntil(f.day||1); if(dd<=3)out.push({kind:'fixo_vence',fixo:f,amount:f.amount,dias:dd}); });
+  (S.fixos||[]).filter(f=>f.active!==false).forEach(f=>{
+    if(payDay){ const dp=dUntil(payDay); if(dp<=3)out.push({kind:'fixo_vence',fixo:f,amount:f.amount,dias:dp,pay:true,note:(f.day&&f.day>payDay)?('vence dia '+f.day):''}); }
+    else { const dd=dUntil(f.day||1); if(dd<=3)out.push({kind:'fixo_vence',fixo:f,amount:f.amount,dias:dd}); }
+  });
   out.sort((a,b)=>a.dias-b.dias);
   return out;
 }
@@ -2060,10 +2068,11 @@ function openNotifications(){
       const dd=rm.dias, quando=dd===0?'hoje':(dd===1?'amanhã':'em '+dd+' dias');
       if(rm.kind==='fatura_vence'){
         const bg=swBg(rm.card), fg=swFg(rm.card);
+        const linha = rm.pay ? ('Seu dia de pagar '+quando+(rm.note?' · '+rm.note:'')) : ('Fatura vence '+quando+(rm.card.dueDay?' · dia '+rm.card.dueDay:''));
         return `<section class="card" style="padding:14px 16px;margin-bottom:8px;background:${bg};border:0">
           <div style="display:flex;align-items:center;gap:10px;color:${fg}">
             <div style="flex:1;min-width:0"><div style="font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(rm.card.name)}</div>
-              <div style="font-size:12px;opacity:.92">Fatura vence ${quando}${rm.card.dueDay?' · dia '+rm.card.dueDay:''}</div></div>
+              <div style="font-size:12px;opacity:.92">${linha}</div></div>
             <div class="num" style="font-weight:700;font-size:16px;white-space:nowrap">${brl(rm.amount)}</div></div>
           <div class="sheet-actions" style="margin-top:10px"><button class="btn" data-rpay="${rm.card.id}" style="background:${fg};color:${bg}">Pagar fatura</button></div>
         </section>`;
@@ -2076,9 +2085,10 @@ function openNotifications(){
           <div class="sheet-actions"><button class="btn ghost" data-rimp="1">Importar fatura</button></div>
         </section>`;
       }
+      const flinha = rm.pay ? ('Seu dia de pagar '+quando+(rm.note?' · '+rm.note:'')) : ('Gasto fixo vence '+quando+(rm.fixo.day?' · dia '+rm.fixo.day:''));
       return `<section class="card" style="padding:12px 14px;margin-bottom:8px;border-left:4px solid #D99A2B">
         <div style="display:flex;align-items:center;gap:10px"><div style="flex:1;min-width:0"><div style="font-weight:600;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(rm.fixo.name)}</div>
-          <div class="hint" style="margin:2px 0 0">Gasto fixo vence ${quando}${rm.fixo.day?' · dia '+rm.fixo.day:''}</div></div>
+          <div class="hint" style="margin:2px 0 0">${flinha}</div></div>
           <div class="num" style="font-weight:700;white-space:nowrap">${brl(rm.amount)}</div></div>
       </section>`;
     }).join('');
